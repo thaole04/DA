@@ -5,8 +5,8 @@ from torchvision import transforms
 from model.LicensePlateModel import LicensePlateModel
 
 # Load the model weights
-def load_model(weights_path, input_size=(256, 512), num_boxes=1):
-    model = LicensePlateModel(input_size=input_size, num_boxes=num_boxes)
+def load_model(weights_path, input_size=(256, 512)):
+    model = LicensePlateModel(input_size=input_size)
     model.load_state_dict(torch.load(weights_path, map_location=torch.device('cpu')))
     model.eval()
     return model
@@ -30,7 +30,7 @@ def preprocess_image(image, input_size):
 # Draw bounding box on the image
 def draw_bounding_box(image, bbox):
     draw = ImageDraw.Draw(image)
-    class_label, x_center, y_center, width, height = bbox
+    x_center, y_center, width, height = bbox
     x_center *= image.width
     y_center *= image.height
     width *= image.width
@@ -46,10 +46,9 @@ def main():
     weights_path = 'license_plate_model.pth'
     image_path = 'test.png'
     input_size = (256, 512)
-    num_boxes = 1
 
     # Load the model
-    model = load_model(weights_path, input_size, num_boxes)
+    model = load_model(weights_path, input_size)
 
     # Resize the image
     resized_image = resize_image(image_path, (512, 256))

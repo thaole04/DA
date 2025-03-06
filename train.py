@@ -31,32 +31,12 @@ class LicensePlateDataset(Dataset):
             image = self.transform(image)
         
         return image, label
-
 def train_model(model, dataloader, criterion, optimizer, device, num_epochs=25):
-    model.to(device)
-    for epoch in range(num_epochs):
-        model.train()
-        running_loss = 0.0
-        for inputs, labels in dataloader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            
-            # Ensure the shapes match
-            if outputs.shape != labels.shape:
-                print(f"Shape mismatch: outputs shape {outputs.shape}, labels shape {labels.shape}")
-                continue
-            
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item() * inputs.size(0)
-        epoch_loss = running_loss / len(dataloader.dataset)
-        print(f'Epoch {epoch}/{num_epochs - 1}, Loss: {epoch_loss:.4f}')
+    # Train process
 
 def main():
     # Set your data path and other parameters
-    data_path = 'train_prepared'
+    data_path = 'train'
     input_size = (256, 512)
     num_boxes = 1
     num_epochs = 25

@@ -15,13 +15,8 @@ class LicensePlateModel(torch.nn.Module):
         self.encoder_stage_2 = EncoderStage(in_channels=16, mid_channels=16, out_channels=32, dropout=dropout)
         self.encoder_stage_3 = EncoderStage(in_channels=32, mid_channels=32, out_channels=64, dropout=dropout)
 
-        # Output branch for bounding box detection
-        self.bbox_out = torch.nn.Sequential(
-            ConvBatchnormReLU(in_channels=64, out_channels=32, padding=1),
-            ConvBatchnormReLU(in_channels=32, out_channels=16, padding=1),
-            ConvBatchnormReLU(in_channels=16, out_channels=8,  padding=1),
-            torch.nn.Conv2d  (in_channels=8,  out_channels=num_boxes * 5, kernel_size=3, padding=1, bias=True),  # 5 values for each bounding box
-        )
+        # Output is bounding box detection
+        self.output = torch.nn.Conv2d(in_channels=64, out_channels=num_boxes * 4, kernel_size=1)
 
     def forward(self, x):
         # Encoder stages
@@ -30,4 +25,7 @@ class LicensePlateModel(torch.nn.Module):
         x3 = self.encoder_stage_3(x2)
 
         # Output branch for bounding box detection
+        x = self.output(x3)
+        bbox = x.view(-1, self.num_boxes, 4, self.output_size[0], self.output_size[1])
+        return bbox
         

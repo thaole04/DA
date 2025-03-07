@@ -3,106 +3,271 @@ import glob
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader, random_split
 from PIL import Image
-import numpy as np
 import torchvision.transforms as transforms
 
-# Import model LicensePlateModel (đảm bảo đường dẫn đúng)
-from model.LicensePlateModel import LicensePlateModel
+# -----------------------------
+# Model: YOLO không sử dụng anchor box
+# -----------------------------
+class YoloNoAnchor(nn.Module):
+    def __init__(self, num_classes=1):
+        super(YoloNoAnchor, self).__init__()
+        self.num_classes = num_classes
 
-class LicensePlateDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
+        # --- Stage 1 ---
+        self.stage1_conv1 = nn.Sequential(
+            nn.Conv2d(3, 16, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.MaxPool2d(2, 2)
+        )
+        self.stage1_conv2 = nn.Sequential(
+            nn.Conv2d(16, 32, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.MaxPool2d(2, 2)
+        )
+        self.stage1_conv3 = nn.Sequential(
+            nn.Conv2d(32, 64, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.stage1_conv4 = nn.Sequential(
+            nn.Conv2d(64, 32, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.stage1_conv5 = nn.Sequential(
+            nn.Conv2d(32, 64, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.MaxPool2d(2, 2)
+        )
+        self.stage1_conv6 = nn.Sequential(
+            nn.Conv2d(64, 128, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.stage1_conv7 = nn.Sequential(
+            nn.Conv2d(128, 64, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.stage1_conv8 = nn.Sequential(
+            nn.Conv2d(64, 128, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.MaxPool2d(2, 2)
+        )
+
+        # --- Stage 2a (đơn giản hóa) ---
+        self.stage2_a_maxpl = nn.MaxPool2d(2, 2)
+        self.stage2_a_conv1 = nn.Sequential(
+            nn.Conv2d(128, 256, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.stage2_a_conv2 = nn.Sequential(
+            nn.Conv2d(256, 128, 1, 1, 0, bias=False),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.stage2_a_conv3 = nn.Sequential(
+            nn.Conv2d(128, 256, 3, 1, 1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+
+        # --- Lớp output ---
+        # Vì loại bỏ anchor box nên mỗi grid cell dự đoán trực tiếp:
+        # [objectness, x, y, w, h, class score] => (5+num_classes) kênh
+        self.output_conv = nn.Conv2d(256, (5 + num_classes), 1, 1, 0, bias=True)
+
+    def forward(self, x):
+        x = self.stage1_conv1(x)
+        x = self.stage1_conv2(x)
+        x = self.stage1_conv3(x)
+        x = self.stage1_conv4(x)
+        x = self.stage1_conv5(x)
+        x = self.stage1_conv6(x)
+        x = self.stage1_conv7(x)
+        x = self.stage1_conv8(x)
+        x = self.stage2_a_maxpl(x)
+        x = self.stage2_a_conv1(x)
+        x = self.stage2_a_conv2(x)
+        x = self.stage2_a_conv3(x)
+        x = self.output_conv(x)
+        return x
+
+# -----------------------------
+# Dataset: Đọc ảnh và label (YOLO format)
+# -----------------------------
+class YOLODataset(Dataset):
+    def __init__(self, root, transform=None):
         """
         Args:
-            root_dir (str): Thư mục chứa 2 folder 'images' và 'labels'.
-            transform (callable, optional): Transform cho ảnh.
+            root (str): Đường dẫn chứa thư mục con 'images' và 'labels'.
+            transform (callable, optional): Các phép biến đổi ảnh.
         """
-        self.images_dir = os.path.join(root_dir, "images")
-        self.labels_dir = os.path.join(root_dir, "labels")
-        self.image_paths = sorted(glob.glob(os.path.join(self.images_dir, "*.png")))
+        self.image_dir = os.path.join(root, "images")
+        self.label_dir = os.path.join(root, "labels")
+        self.image_paths = sorted(glob.glob(os.path.join(self.image_dir, "*.jpg")))
         self.transform = transform
 
     def __len__(self):
         return len(self.image_paths)
 
     def __getitem__(self, idx):
-        # Load ảnh
         img_path = self.image_paths[idx]
         image = Image.open(img_path).convert("RGB")
         if self.transform:
             image = self.transform(image)
-        else:
-            image = transforms.ToTensor()(image)
-        
-        # Đọc file label với cùng tên ảnh (định dạng YOLO: class x_center y_center width height)
-        base_name = os.path.splitext(os.path.basename(img_path))[0]
-        label_path = os.path.join(self.labels_dir, base_name + ".txt")
-        with open(label_path, "r") as f:
-            line = f.readline().strip()
-            parts = line.split()
-            if len(parts) != 5:
-                raise ValueError(f"File {label_path} không có đúng 5 phần tử (class x_center y_center width height)")
-            # Ở đây ta bỏ qua class (parts[0]) và chỉ lấy các giá trị bounding box
-            bbox = np.array(parts[1:], dtype=np.float32)
-        
-        bbox = torch.tensor(bbox, dtype=torch.float32)
-        return image, bbox
+        base_name = os.path.basename(img_path).replace(".jpg", ".txt")
+        label_path = os.path.join(self.label_dir, base_name)
+        boxes = []
+        if os.path.exists(label_path):
+            with open(label_path, "r") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) == 5:
+                        cls, x_center, y_center, w, h = parts
+                        boxes.append([float(cls), float(x_center), float(y_center), float(w), float(h)])
+        target = torch.tensor(boxes) if boxes else torch.empty((0, 5))
+        return image, target
 
-def train_model():
-    # Tham số huấn luyện
-    num_epochs = 20
+# -----------------------------
+# Hàm loss: compute_yolo_loss
+# -----------------------------
+def compute_yolo_loss(predictions, targets, grid_size=8, lambda_coord=5, lambda_noobj=0.5):
+    """
+    predictions: tensor shape (B, 5+num_classes, S, S) với S = grid_size (ví dụ: 8)
+    targets: danh sách length=B, mỗi phần tử tensor shape (num_boxes, 5) với [class, x, y, w, h]
+    grid_size: kích thước grid, ở đây là 8 (với ảnh 256x256)
+    lambda_coord: trọng số cho localization loss
+    lambda_noobj: trọng số cho objectness loss ở các cell không chứa đối tượng
+    """
+    B = predictions.size(0)
+    device = predictions.device
+    num_classes = predictions.size(1) - 5
+
+    # Tạo các target tensor cho toàn bộ grid cell
+    target_obj = torch.zeros((B, grid_size, grid_size), device=device)    # objectness
+    target_bbox = torch.zeros((B, 4, grid_size, grid_size), device=device)   # [x, y, w, h]
+    target_class = torch.zeros((B, grid_size, grid_size), device=device)     # class
+
+    # Với mỗi ảnh (giả sử mỗi ảnh chỉ có 1 đối tượng)
+    for i in range(B):
+        if targets[i].numel() == 0:
+            continue  # Không có đối tượng
+        gt = targets[i][0]  # Lấy box đầu tiên: [cls, x, y, w, h]
+        gt_class = 1  # Vì chỉ có 1 lớp, đặt target class là 1
+        gt_x, gt_y, gt_w, gt_h = gt[1], gt[2], gt[3], gt[4]
+
+        # Xác định grid cell chứa trung tâm
+        cell_j = int(gt_x * grid_size)
+        cell_i = int(gt_y * grid_size)
+        cell_j = min(cell_j, grid_size - 1)
+        cell_i = min(cell_i, grid_size - 1)
+
+        # Tính offset bên trong cell (trong khoảng [0, 1])
+        t_x = gt_x * grid_size - cell_j
+        t_y = gt_y * grid_size - cell_i
+
+        target_obj[i, cell_i, cell_j] = 1
+        target_bbox[i, :, cell_i, cell_j] = torch.tensor([t_x, t_y, gt_w, gt_h], device=device)
+        target_class[i, cell_i, cell_j] = gt_class
+
+    # Tách các thành phần dự đoán từ output của model
+    # predictions có shape (B, 5+num_classes, S, S)
+    pred_obj   = predictions[:, 0, :, :]            # objectness
+    pred_bbox  = predictions[:, 1:5, :, :]            # bbox: x, y, w, h
+    pred_class = predictions[:, 5, :, :]              # class score (cho bài toán 1 lớp)
+
+    # --- Objectness Loss ---
+    bce_loss = F.binary_cross_entropy(torch.sigmoid(pred_obj), target_obj, reduction='none')
+    obj_mask = target_obj == 1
+    noobj_mask = target_obj == 0
+    loss_obj = bce_loss[obj_mask].sum() + lambda_noobj * bce_loss[noobj_mask].sum()
+
+    # --- Localization Loss ---
+    mask = obj_mask.unsqueeze(1).float()  # shape: (B, 1, S, S)
+    pred_xy = torch.sigmoid(pred_bbox[:, :2, :, :])
+    pred_wh = pred_bbox[:, 2:4, :, :]
+    target_xy = target_bbox[:, :2, :, :]
+    target_wh = target_bbox[:, 2:4, :, :]
+    loss_loc = F.mse_loss(pred_xy * mask, target_xy * mask, reduction='sum')
+    loss_loc += F.mse_loss(pred_wh * mask, target_wh * mask, reduction='sum')
+
+    # --- Classification Loss ---
+    loss_class = F.binary_cross_entropy(torch.sigmoid(pred_class)[obj_mask],
+                                        target_class[obj_mask], reduction='sum')
+
+    total_loss = lambda_coord * loss_loc + loss_obj + loss_class
+    return total_loss
+
+# -----------------------------
+# Main: Training và Validation
+# -----------------------------
+def main():
+    # Thiết lập các tham số training
+    root_dir = "train_20000_256"         # Thư mục chứa 'images' và 'labels'
     batch_size = 16
-    learning_rate = 1e-3
-    train_dir = "train"  # thư mục chứa images/ và labels/
+    num_epochs = 10
+    learning_rate = 1e-4
 
-    # Kiểm tra device: GPU nếu có, ngược lại dùng CPU
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-    
-    # Transform: Resize (nếu cần) và chuyển thành tensor
     transform = transforms.Compose([
-        transforms.Resize((256, 512)),
         transforms.ToTensor(),
     ])
-    
-    # Dataset và DataLoader
-    dataset = LicensePlateDataset(root_dir=train_dir, transform=transform)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
-    # Khởi tạo model (model dự đoán 1 bounding box với 4 giá trị)
-    model = LicensePlateModel(input_size=(256, 512), dropout=True)
-    model = model.to(device)
+    # Tạo dataset và tách thành train/validation
+    dataset = YOLODataset(root_dir, transform=transform)
+    total_images = len(dataset)
+    valid_size = 1000 if total_images >= 1000 else int(total_images * 0.1)
+    train_size = total_images - valid_size
+    train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
-    # Loss và Optimizer
-    criterion = nn.MSELoss()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = YoloNoAnchor(num_classes=1).to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-    # Vòng lặp huấn luyện
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
-
-        for i, (images, targets) in enumerate(dataloader):
+        for batch_idx, (images, targets) in enumerate(train_loader):
             images = images.to(device)
-            targets = targets.to(device)
-
+            # targets là list các tensor, mỗi tensor có shape (num_boxes, 5)
+            targets = list(targets)
             optimizer.zero_grad()
-            outputs = model(images)  # outputs có kích thước (B, 4)
-            loss = criterion(outputs, targets)
+            outputs = model(images)
+            loss = compute_yolo_loss(outputs, targets, grid_size=8)
             loss.backward()
             optimizer.step()
-
             running_loss += loss.item()
-            if (i + 1) % 10 == 0:
-                print(f"Epoch [{epoch+1}/{num_epochs}], Step [{i+1}/{len(dataloader)}], Loss: {loss.item():.4f}")
+            if (batch_idx + 1) % 10 == 0:
+                print(f"Epoch [{epoch+1}/{num_epochs}], Step [{batch_idx+1}/{len(train_loader)}], Loss: {loss.item():.4f}")
+        avg_loss = running_loss / len(train_loader)
+        print(f"Epoch [{epoch+1}/{num_epochs}] Training Loss: {avg_loss:.4f}")
 
-        epoch_loss = running_loss / len(dataloader)
-        print(f"Epoch [{epoch+1}/{num_epochs}] Loss: {epoch_loss:.4f}")
+        # Validation sau mỗi epoch
+        model.eval()
+        valid_loss = 0.0
+        with torch.no_grad():
+            for images, targets in valid_loader:
+                images = images.to(device)
+                targets = list(targets)
+                outputs = model(images)
+                loss = compute_yolo_loss(outputs, targets, grid_size=8)
+                valid_loss += loss.item()
+            avg_valid_loss = valid_loss / len(valid_loader)
+            print(f"Epoch [{epoch+1}/{num_epochs}] Validation Loss: {avg_valid_loss:.4f}")
 
-    print("Training complete.")
-    # Lưu model sau khi training
-    torch.save(model.state_dict(), "license_plate_model.pth")
+    # Lưu model sau training
+    torch.save(model.state_dict(), "yolo_no_anchor_model.pth")
+    print("Training complete. Model saved as 'yolo_no_anchor_model.pth'.")
 
 if __name__ == "__main__":
-    train_model()
+    main()

@@ -3,105 +3,136 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
 from PIL import Image
+from torchsummary import summary
 
-#########################################
-# Model: YoloNoAnchorDeeper
-#########################################
-class YoloNoAnchorDeeper(nn.Module):
+# -----------------------------
+# Model: YOLO không sử dụng anchor box
+# -----------------------------
+class YoloNoAnchor(nn.Module):
     def __init__(self, num_classes=1):
-        super(YoloNoAnchorDeeper, self).__init__()
+        super(YoloNoAnchor, self).__init__()
         self.num_classes = num_classes
-        # Block 1: 256x256 -> 128x128, channels: 3 -> 16
-        self.block1 = nn.Sequential(
-            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False),
+
+        # --- Stage 1 ---
+        self.stage1_conv1 = nn.Sequential(
+            nn.Conv2d(3, 8, 3, 1, 1, bias=False),  # giảm từ 16 -> 8
+            nn.BatchNorm2d(8),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.MaxPool2d(2, 2)  # 256 -> 128
+        )
+        self.stage1_conv2 = nn.Sequential(
+            nn.Conv2d(8, 16, 3, 1, 1, bias=False),  # giảm từ 32 -> 16
             nn.BatchNorm2d(16),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.MaxPool2d(2, 2)
+            nn.MaxPool2d(2, 2)  # 128 -> 64
         )
-        # Block 2: 128x128 -> 64x64, channels: 16 -> 32
-        self.block2 = nn.Sequential(
-            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1, bias=False),
+        self.stage1_conv3 = nn.Sequential(
+            nn.Conv2d(16, 32, 3, 1, 1, bias=False),  # giảm từ 64 -> 32
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.stage1_conv4 = nn.Sequential(
+            nn.Conv2d(32, 16, 1, 1, 0, bias=False),  # giảm từ 64 -> 32, sau đó giảm xuống 16
+            nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.stage1_conv5 = nn.Sequential(
+            nn.Conv2d(16, 32, 3, 1, 1, bias=False),  # giảm từ 64 -> 32
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.MaxPool2d(2, 2)
+            nn.MaxPool2d(2, 2)  # 64 -> 32
         )
-        # Block 3: 64x64 -> 32x32, channels: 32 -> 64
-        self.block3 = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False),
+        self.stage1_conv6 = nn.Sequential(
+            nn.Conv2d(32, 64, 3, 1, 1, bias=False),  # giảm từ 128 -> 64
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.stage1_conv7 = nn.Sequential(
+            nn.Conv2d(64, 32, 1, 1, 0, bias=False),  # giảm từ 128 -> 64, sau đó giảm xuống 32
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.stage1_conv8 = nn.Sequential(
+            nn.Conv2d(32, 64, 3, 1, 1, bias=False),  # giảm từ 128 -> 64
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.MaxPool2d(2, 2)
+            nn.MaxPool2d(2, 2)  # 32 -> 16
         )
-        # Block 4: 32x32 -> 16x16, channels: 64 -> 128
-        self.block4 = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1, bias=False),
+
+        # --- Stage 2a (đơn giản hóa) ---
+        self.stage2_a_maxpl = nn.MaxPool2d(2, 2)  # 16 -> 8
+        self.stage2_a_conv1 = nn.Sequential(
+            nn.Conv2d(64, 128, 1, 1, 0, bias=False),  # giảm từ 256 -> 128
             nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.1, inplace=True),
-            nn.MaxPool2d(2, 2)
+            nn.LeakyReLU(0.1, inplace=True)
         )
-        # Block 5: 16x16 -> 8x8, channels: 128 -> 256
-        self.block5 = nn.Sequential(
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.1, inplace=True),
-            nn.MaxPool2d(2, 2)
+        self.stage2_a_conv2 = nn.Sequential(
+            nn.Conv2d(128, 64, 1, 1, 0, bias=False),  # giảm từ 256 -> 128, sau đó giảm xuống 64
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1, inplace=True)
         )
-        # Output layer: Predict 6 channels: [objectness, x, y, w, h, class score]
-        self.out_conv = nn.Conv2d(256, (5 + num_classes), kernel_size=1, stride=1, padding=0, bias=True)
-    
+        self.stage2_a_conv3 = nn.Sequential(
+            nn.Conv2d(64, 128, 1, 1, 0, bias=False),  # giảm từ 256 -> 128
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1, inplace=True)
+        )
+        # --- Lớp output ---
+        self.output_conv = nn.Conv2d(128, (5 + num_classes), 1, 1, 0, bias=True)
+
     def forward(self, x):
-        x = self.block1(x)  # 256 -> 128
-        x = self.block2(x)  # 128 -> 64
-        x = self.block3(x)  # 64 -> 32
-        x = self.block4(x)  # 32 -> 16
-        x = self.block5(x)  # 16 -> 8
-        x = self.out_conv(x)  # Output shape: (B, 6, 8, 8)
+        x = self.stage1_conv1(x)
+        x = self.stage1_conv2(x)
+        x = self.stage1_conv3(x)
+        x = self.stage1_conv4(x)
+        x = self.stage1_conv5(x)
+        x = self.stage1_conv6(x)
+        x = self.stage1_conv7(x)
+        x = self.stage1_conv8(x)
+        x = self.stage2_a_maxpl(x)
+        x = self.stage2_a_conv1(x)
+        x = self.stage2_a_conv2(x)
+        x = self.stage2_a_conv3(x)
+        x = self.output_conv(x)
         return x
 
-#########################################
-# Decode function: convert model output into bounding boxes
-#########################################
+# -----------------------------
+# Hàm decode output từ model
+# -----------------------------
 def decode_predictions(predictions, conf_threshold=0.3, grid_size=8, img_size=256):
     """
-    Args:
-      predictions: Tensor of shape (1, 6, grid_size, grid_size)
-      conf_threshold: Minimum objectness confidence to consider a box.
-      grid_size: The spatial resolution of the output grid (8 for this model).
-      img_size: Size of the input image (assumed square, e.g., 256).
+    predictions: tensor shape (1, 6, grid_size, grid_size)
+    Trả về danh sách các box dạng (x1, y1, x2, y2, confidence)
     
-    Returns:
-      A list of bounding boxes as tuples: (x1, y1, x2, y2, confidence)
-      
-    Decoding details:
-      - The first channel is the objectness score (apply sigmoid).
-      - The next two channels are x and y offsets within each grid cell (apply sigmoid).
-      - The following two channels are width and height predictions, which are scaled by img_size.
+    Cách decode:
+      - Với mỗi grid cell, x và y được dự đoán qua hàm sigmoid (offset trong cell)
+      - Chuyển offset và chỉ số cell thành tọa độ trung tâm tuyệt đối.
+      - w, h được dự đoán trực tiếp (giả sử các giá trị đã được huấn luyện ổn định, nếu cần có thể áp dụng sigmoid hoặc clamp).
+      - Chuyển từ tọa độ trung tâm và kích thước thành góc trên bên trái và góc dưới bên phải.
     """
     preds = predictions[0]  # shape: (6, grid_size, grid_size)
     boxes = []
-    # Objectness score
-    obj = torch.sigmoid(preds[0])
-    cell_size = img_size / grid_size  # e.g., 256/8 = 32 pixels per cell
+    obj = torch.sigmoid(preds[0])  # objectness score
     for i in range(grid_size):
         for j in range(grid_size):
             conf = obj[i, j].item()
             if conf > conf_threshold:
-                # Offsets for center coordinates
+                # Dự đoán offset (x, y) trong cell, áp dụng sigmoid
                 tx = torch.sigmoid(preds[1, i, j]).item()
                 ty = torch.sigmoid(preds[2, i, j]).item()
-                # Predicted width and height
+                # Dự đoán w, h (có thể cần clamp nếu âm)
                 tw = preds[3, i, j].item()
                 th = preds[4, i, j].item()
-                # Ensure non-negative dimensions
                 tw = max(tw, 0)
                 th = max(th, 0)
-                # Compute absolute center coordinates
+                
+                cell_size = img_size / grid_size  # ví dụ: 256/8 = 32
+                # Tọa độ trung tâm tuyệt đối:
                 cx = (j + tx) * cell_size
                 cy = (i + ty) * cell_size
-                # Compute box width and height in absolute pixels
+                # Chuyển w, h từ giá trị chuẩn hóa thành kích thước tuyệt đối:
                 box_w = tw * img_size
                 box_h = th * img_size
-                # Convert center, width, height to top-left and bottom-right coordinates
+                # Tính tọa độ box: chuyển từ trung tâm sang góc trái và phải
                 x1 = int(cx - box_w / 2)
                 y1 = int(cy - box_h / 2)
                 x2 = int(cx + box_w / 2)
@@ -109,34 +140,42 @@ def decode_predictions(predictions, conf_threshold=0.3, grid_size=8, img_size=25
                 boxes.append((x1, y1, x2, y2, conf))
     return boxes
 
-#########################################
-# Main: Test the model using the webcam
-#########################################
+# -----------------------------
+# Main: Test model sử dụng webcam
+# -----------------------------
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # Instantiate the model and load pretrained weights
-    model = YoloNoAnchorDeeper(num_classes=1).to(device)
-    weight_path = "yolo_no_anchor_model_deeper.pth"
+    model = YoloNoAnchor(num_classes=1).to(device)
+    
+    # Load weights đã train
+    weight_path = "yolo_no_anchor_model.pth"
     model.load_state_dict(torch.load(weight_path, map_location=device))
     model.eval()
+
+    # Hiển thị cấu trúc model
+    summary(model, (3, 256, 256))
+    # Hiển thị thông tin số lượng tham số
+    print(f"Số lượng tham số: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
     
     transform = transforms.Compose([
         transforms.ToTensor(),
     ])
     
+    # Mở webcam
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("Cannot open webcam!")
+        print("Không thể mở webcam!")
         return
-    
+
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("Failed to receive frame from webcam.")
+            print("Không nhận được frame từ webcam.")
             break
 
-        # Resize frame to 256x256 and convert from BGR to RGB
+        # Resize frame về 256x256
         frame_resized = cv2.resize(frame, (256, 256))
+        # Chuyển đổi BGR sang RGB
         frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(frame_rgb)
         input_tensor = transform(pil_img).unsqueeze(0).to(device)
@@ -144,20 +183,22 @@ def main():
         with torch.no_grad():
             outputs = model(input_tensor)
         
-        # Decode the model outputs into bounding boxes
+        # Decode dự đoán
         boxes = decode_predictions(outputs, conf_threshold=0.3, grid_size=8, img_size=256)
+        
+        # Vì mỗi ảnh chỉ có 1 đối tượng, chọn box có confidence cao nhất (nếu có)
         if boxes:
-            # Since each image contains one object, choose the box with the highest confidence
             best_box = max(boxes, key=lambda x: x[4])
             x1, y1, x2, y2, conf = best_box
             cv2.rectangle(frame_resized, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(frame_resized, f"Conf: {conf:.2f}", (x1, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
-        cv2.imshow("Test YoloNoAnchorDeeper", frame_resized)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        cv2.imshow("YOLO No Anchor Detection", frame_resized)
+        
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-    
+
     cap.release()
     cv2.destroyAllWindows()
 

@@ -5,6 +5,7 @@ import torchvision.transforms as transforms
 from PIL import Image
 import torch.ao.quantization as quant
 from train import YoloNoAnchor  # assuming your model is defined in train.py
+from test import decode_predictions# assuming your model is defined in train.py
 
 # Define a function to fuse modules (modify as needed for your model)
 def fuse_model(model):
@@ -91,5 +92,6 @@ def test_quantized_model():
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
+    torch.backends.quantized.engine = 'fbgemm'
     test_quantized_model()
 

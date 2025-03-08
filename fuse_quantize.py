@@ -24,7 +24,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # Tải mô hình đã được train (file yolo_no_anchor_model.pth)
     model = YoloNoAnchor(num_classes=1).to(device)
-    model.load_state_dict(torch.load("yolo_no_anchor_model.pth", map_location=device))
+    model.load_state_dict(torch.load("yolo_no_anchor_model.pth", map_location='cpu'))
     model.eval()
 
     # Fuse các layer: Conv + BatchNorm + LeakyReLU
@@ -32,7 +32,7 @@ def main():
     print("Model fused!")
 
     # Đặt cấu hình lượng tử hóa: dùng qconfig mặc định cho fbgemm (tối ưu cho CPU)
-    model.qconfig = quant.get_default_qconfig("fbgemm")
+    model.qconfig = quant.get_default_qconfig("qnnpack")
     # Prepare mô hình cho lượng tử hóa (PTQ)
     quant.prepare(model, inplace=True)
     

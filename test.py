@@ -149,7 +149,7 @@ def main():
     model = YoloNoAnchor(num_classes=1).to(device)
     
     # Load weights đã train
-    weight_path = "yolo_no_anchor_model.pth"
+    weight_path = "yolo_no_anchor_quantized.pth"
     model.load_state_dict(torch.load(weight_path, map_location=device))
     model.eval()
     

@@ -1,86 +1,80 @@
 import cv2
 import torch
 import torch.nn as nn
-import torch.quantization
 import torchvision.transforms as transforms
 from PIL import Image
-torch.backends.quantized.engine = 'qnnpack'
 
 # -----------------------------
-# Định nghĩa model gốc (YOLO không sử dụng anchor box)
+# Định nghĩa model YoloNoAnchor (giống với kiến trúc dùng để quantize)
 # -----------------------------
 class YoloNoAnchor(nn.Module):
     def __init__(self, num_classes=1):
         super(YoloNoAnchor, self).__init__()
         self.num_classes = num_classes
-
-        # --- Stage 1 ---
+        # Stage 1
         self.stage1_conv1 = nn.Sequential(
-            nn.Conv2d(3, 16, 3, 1, 1, bias=False),
+            nn.Conv2d(3, 16, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(16),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.MaxPool2d(2, 2)
+            nn.MaxPool2d(2,2)
         )
         self.stage1_conv2 = nn.Sequential(
-            nn.Conv2d(16, 32, 3, 1, 1, bias=False),
+            nn.Conv2d(16, 32, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.MaxPool2d(2, 2)
+            nn.MaxPool2d(2,2)
         )
         self.stage1_conv3 = nn.Sequential(
-            nn.Conv2d(32, 64, 3, 1, 1, bias=False),
+            nn.Conv2d(32, 64, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.1, inplace=True)
         )
         self.stage1_conv4 = nn.Sequential(
-            nn.Conv2d(64, 32, 1, 1, 0, bias=False),
+            nn.Conv2d(64, 32, 1, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.1, inplace=True)
         )
         self.stage1_conv5 = nn.Sequential(
-            nn.Conv2d(32, 64, 3, 1, 1, bias=False),
+            nn.Conv2d(32, 64, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.MaxPool2d(2, 2)
+            nn.MaxPool2d(2,2)
         )
         self.stage1_conv6 = nn.Sequential(
-            nn.Conv2d(64, 128, 3, 1, 1, bias=False),
+            nn.Conv2d(64, 128, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.1, inplace=True)
         )
         self.stage1_conv7 = nn.Sequential(
-            nn.Conv2d(128, 64, 1, 1, 0, bias=False),
+            nn.Conv2d(128, 64, 1, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.1, inplace=True)
         )
         self.stage1_conv8 = nn.Sequential(
-            nn.Conv2d(64, 128, 3, 1, 1, bias=False),
+            nn.Conv2d(64, 128, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.1, inplace=True),
-            nn.MaxPool2d(2, 2)
+            nn.MaxPool2d(2,2)
         )
-
-        # --- Stage 2a (đơn giản hóa) ---
-        self.stage2_a_maxpl = nn.MaxPool2d(2, 2)
+        # Stage 2a
+        self.stage2_a_maxpl = nn.MaxPool2d(2,2)
         self.stage2_a_conv1 = nn.Sequential(
-            nn.Conv2d(128, 256, 3, 1, 1, bias=False),
+            nn.Conv2d(128, 256, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.1, inplace=True)
         )
         self.stage2_a_conv2 = nn.Sequential(
-            nn.Conv2d(256, 128, 1, 1, 0, bias=False),
+            nn.Conv2d(256, 128, 1, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(128),
             nn.LeakyReLU(0.1, inplace=True)
         )
         self.stage2_a_conv3 = nn.Sequential(
-            nn.Conv2d(128, 256, 3, 1, 1, bias=False),
+            nn.Conv2d(128, 256, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.1, inplace=True)
         )
-
-        # --- Lớp output ---
-        # Mỗi grid cell dự đoán trực tiếp [objectness, x, y, w, h, class score]
-        self.output_conv = nn.Conv2d(256, (5 + num_classes), 1, 1, 0, bias=True)
+        # Output layer: Dự đoán [objectness, x, y, w, h, class score]
+        self.output_conv = nn.Conv2d(256, (5 + num_classes), 1, stride=1, padding=0, bias=True)
 
     def forward(self, x):
         x = self.stage1_conv1(x)
@@ -99,55 +93,17 @@ class YoloNoAnchor(nn.Module):
         return x
 
 # -----------------------------
-# Hàm fuse các module cho static quantization
-# -----------------------------
-def fuse_model(model):
-    # Fuse các cặp (Conv, BatchNorm) trong các Sequential block
-    torch.quantization.fuse_modules(model.stage1_conv1, ['0', '1'], inplace=True)
-    torch.quantization.fuse_modules(model.stage1_conv2, ['0', '1'], inplace=True)
-    torch.quantization.fuse_modules(model.stage1_conv3, ['0', '1'], inplace=True)
-    torch.quantization.fuse_modules(model.stage1_conv4, ['0', '1'], inplace=True)
-    torch.quantization.fuse_modules(model.stage1_conv5, ['0', '1'], inplace=True)
-    torch.quantization.fuse_modules(model.stage1_conv6, ['0', '1'], inplace=True)
-    torch.quantization.fuse_modules(model.stage1_conv7, ['0', '1'], inplace=True)
-    torch.quantization.fuse_modules(model.stage1_conv8, ['0', '1'], inplace=True)
-    torch.quantization.fuse_modules(model.stage2_a_conv1, ['0', '1'], inplace=True)
-    torch.quantization.fuse_modules(model.stage2_a_conv2, ['0', '1'], inplace=True)
-    torch.quantization.fuse_modules(model.stage2_a_conv3, ['0', '1'], inplace=True)
-    return model
-
-# -----------------------------
-# Hàm tải model quantized từ weight file
-# -----------------------------
-def load_quantized_model(weight_path="yolo_no_anchor_model_int8.pth", num_classes=1):
-    # Tạo model gốc
-    model = YoloNoAnchor(num_classes=num_classes)
-    # eval() để chuyển model sang chế độ inference
-    model.eval()
-    # Fuse các module
-    model = fuse_model(model)
-    # Gán quantization config (sử dụng 'fbgemm' cho CPU)
-    model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
-    # Chuẩn bị model cho static quantization
-    torch.quantization.prepare(model, inplace=True)
-    # Chuyển đổi model sang phiên bản quantized
-    model = torch.quantization.convert(model, inplace=True)
-    # Load weight quantized
-    model.load_state_dict(torch.load(weight_path, map_location="cpu"))
-    return model
-
-# -----------------------------
 # Hàm decode output từ model
 # -----------------------------
 def decode_predictions(predictions, conf_threshold=0.3, grid_size=8, img_size=256):
     """
-    predictions: tensor shape (1, 6, grid_size, grid_size)
-    Trả về danh sách các box dạng (x1, y1, x2, y2, confidence)
+    predictions: tensor có shape (1, 6, grid_size, grid_size)
+    Trả về danh sách bounding box dưới dạng (x1, y1, x2, y2, confidence)
     
     Cách decode:
       - objectness: sigmoid(pred[0])
-      - (x, y): offset trong cell, qua sigmoid, cộng với vị trí cell để tính trung tâm tuyệt đối
-      - w, h: dự đoán trực tiếp, nhân với img_size để có kích thước tuyệt đối
+      - (x, y): offset trong cell (qua sigmoid) cộng với vị trí cell để tính trung tâm tuyệt đối
+      - (w, h): dự đoán trực tiếp, nhân với img_size để có kích thước tuyệt đối
     """
     preds = predictions[0]  # shape: (6, grid_size, grid_size)
     boxes = []
@@ -160,11 +116,9 @@ def decode_predictions(predictions, conf_threshold=0.3, grid_size=8, img_size=25
                 ty = torch.sigmoid(preds[2, i, j]).item()
                 tw = preds[3, i, j].item()
                 th = preds[4, i, j].item()
-                # Đảm bảo kích thước không âm
                 tw = max(tw, 0)
                 th = max(th, 0)
-                
-                cell_size = img_size / grid_size
+                cell_size = img_size / grid_size  # Ví dụ: 256/8 = 32
                 cx = (j + tx) * cell_size
                 cy = (i + ty) * cell_size
                 box_w = tw * img_size
@@ -177,13 +131,19 @@ def decode_predictions(predictions, conf_threshold=0.3, grid_size=8, img_size=25
     return boxes
 
 # -----------------------------
-# Main: Test model quantized sử dụng webcam
+# Main: Test model quantized với webcam
 # -----------------------------
 def main():
-    device = torch.device("cpu")
-    # Load model quantized
-    model = load_quantized_model(weight_path="yolo_no_anchor_model_int8.pth", num_classes=1)
-    model.to(device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Khởi tạo model và load weight quantized
+    model = YoloNoAnchor(num_classes=1).to(device)
+    state_dict = torch.load("yolo_no_anchor_model_quantized.pth", map_location="cpu")
+    for key, value in state_dict.items():
+        if hasattr(value, "dequantize"):
+            state_dict[key] = value.dequantize()
+    model.load_state_dict(state_dict)
+    model.eval()
     
     transform = transforms.Compose([
         transforms.ToTensor(),
@@ -193,14 +153,14 @@ def main():
     if not cap.isOpened():
         print("Không thể mở webcam!")
         return
-    
+
     while True:
         ret, frame = cap.read()
         if not ret:
             print("Không nhận được frame từ webcam.")
             break
-        
-        # Resize frame về 256x256 và chuyển đổi định dạng
+
+        # Resize frame về 256x256 và chuyển sang RGB
         frame_resized = cv2.resize(frame, (256, 256))
         frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(frame_rgb)
@@ -209,9 +169,9 @@ def main():
         with torch.no_grad():
             outputs = model(input_tensor)
         
+        # Decode bounding box từ output
         boxes = decode_predictions(outputs, conf_threshold=0.3, grid_size=8, img_size=256)
-        
-        # Vì mỗi ảnh chỉ chứa 1 đối tượng, chọn box có confidence cao nhất (nếu có)
+        # Vì mỗi ảnh chỉ có 1 biển số, chọn bounding box có confidence cao nhất (nếu có)
         if boxes:
             best_box = max(boxes, key=lambda x: x[4])
             x1, y1, x2, y2, conf = best_box
@@ -219,10 +179,10 @@ def main():
             cv2.putText(frame_resized, f"Conf: {conf:.2f}", (x1, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
-        cv2.imshow("Quantized YOLO Detection", frame_resized)
+        cv2.imshow("Quantized YOLO Inference", frame_resized)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-    
+
     cap.release()
     cv2.destroyAllWindows()
 

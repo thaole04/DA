@@ -1,67 +1,53 @@
 import torch
 import torch.nn as nn
 
-class Yolo(nn.Module):
-    def __init__(self, num_classes,
-                 anchors=[(392.89, 166.93),
-                        (243.84, 194.15),
-                        (170.57, 75.62),
-                        (95.37, 49.03),
-                        (43.02, 28.53)]):
-        super(Yolo, self).__init__()
+class YoloNoAnchorLite(nn.Module):
+    def __init__(self, num_classes=1):
+        super(YoloNoAnchorLite, self).__init__()
         self.num_classes = num_classes
-        self.anchors = anchors
 
-        # Stage 1 - Giảm channels đáng kể
-        self.stage1_conv1 = nn.Sequential(nn.Conv2d(3, 16, 3, 1, 1, bias=False), nn.BatchNorm2d(16),
-                                          nn.LeakyReLU(0.1, inplace=True), nn.MaxPool2d(2, 2))
-        self.stage1_conv2 = nn.Sequential(nn.Conv2d(16, 32, 3, 1, 1, bias=False), nn.BatchNorm2d(32),
-                                          nn.LeakyReLU(0.1, inplace=True), nn.MaxPool2d(2, 2))
-        self.stage1_conv3 = nn.Sequential(nn.Conv2d(32, 64, 3, 1, 1, bias=False), nn.BatchNorm2d(64),
-                                          nn.LeakyReLU(0.1, inplace=True))
-        self.stage1_conv4 = nn.Sequential(nn.Conv2d(64, 32, 1, 1, 0, bias=False), nn.BatchNorm2d(32),
-                                          nn.LeakyReLU(0.1, inplace=True))
-        self.stage1_conv5 = nn.Sequential(nn.Conv2d(32, 64, 3, 1, 1, bias=False), nn.BatchNorm2d(64),
-                                          nn.LeakyReLU(0.1, inplace=True), nn.MaxPool2d(2, 2))
-        self.stage1_conv6 = nn.Sequential(nn.Conv2d(64, 128, 3, 1, 1, bias=False), nn.BatchNorm2d(128),
-                                          nn.LeakyReLU(0.1, inplace=True))
-        self.stage1_conv7 = nn.Sequential(nn.Conv2d(128, 64, 1, 1, 0, bias=False), nn.BatchNorm2d(64),
-                                          nn.LeakyReLU(0.1, inplace=True))
-        self.stage1_conv8 = nn.Sequential(nn.Conv2d(64, 128, 3, 1, 1, bias=False), nn.BatchNorm2d(128),
-                                          nn.LeakyReLU(0.1, inplace=True), nn.MaxPool2d(2, 2))
+        # Block 1: Xuất (3 -> 16)
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.MaxPool2d(2, 2)  # Kích thước giảm: 256 -> 128
+        )
+        # Block 2: (16 -> 32)
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.MaxPool2d(2, 2)  # 128 -> 64
+        )
+        # Block 3: (32 -> 64)
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1, inplace=True)
+            # Không pool để giữ lại thông tin không quá mất đi độ phân giải
+        )
+        # Block 4: (64 -> 128)
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.MaxPool2d(2, 2)  # 64 -> 32
+        )
+        # Lớp output: Dự đoán 6 kênh: objectness, x, y, w, h, class score
+        self.out_conv = nn.Conv2d(128, (5 + num_classes), kernel_size=1, stride=1, padding=0, bias=True)
 
-        # Loại bỏ Stage 2b và Stage 3, đơn giản hóa Stage 2a
-        self.stage2_a_maxpl = nn.MaxPool2d(2, 2)
-        self.stage2_a_conv1 = nn.Sequential(nn.Conv2d(128, 256, 3, 1, 1, bias=False), # Giảm channel
-                                            nn.BatchNorm2d(256), nn.LeakyReLU(0.1, inplace=True))
-        self.stage2_a_conv2 = nn.Sequential(nn.Conv2d(256, 128, 1, 1, 0, bias=False), nn.BatchNorm2d(128), # Giảm channel
-                                            nn.LeakyReLU(0.1, inplace=True))
-        self.stage2_a_conv3 = nn.Sequential(nn.Conv2d(128, 256, 3, 1, 1, bias=False), nn.BatchNorm2d(256), # Giảm channel
-                                            nn.LeakyReLU(0.1, inplace=True))
-
-        # Output Layer - Chỉ cần 5 + 1 = 6 channels cho mỗi anchor box
-        self.output_conv = nn.Conv2d(256, len(self.anchors) * (5 + num_classes), 1, 1, 0, bias=True) # num_classes = 1
-
-    def forward(self, input):
-        output = self.stage1_conv1(input)
-        output = self.stage1_conv2(output)
-        output = self.stage1_conv3(output)
-        output = self.stage1_conv4(output)
-        output = self.stage1_conv5(output)
-        output = self.stage1_conv6(output)
-        output = self.stage1_conv7(output)
-        output = self.stage1_conv8(output)
-
-        # Stage 2a đã được đơn giản hóa
-        output = self.stage2_a_maxpl(output)
-        output = self.stage2_a_conv1(output)
-        output = self.stage2_a_conv2(output)
-        output = self.stage2_a_conv3(output)
-
-        # Output Layer
-        output = self.output_conv(output)
-        return output
-    
+    def forward(self, x):
+        x = self.conv1(x)   # kích thước: 256 -> 128
+        x = self.conv2(x)   # 128 -> 64
+        x = self.conv3(x)   # kích thước giữ nguyên: 64
+        x = self.conv4(x)   # 64 -> 32
+        x = self.out_conv(x)
+        return x
 
 if __name__ == "__main__":
-    net = Yolo(1)
+    # Test model với dummy input
+    model = YoloNoAnchorLite(num_classes=1)
+    dummy_input = torch.randn(1, 3, 256, 256)
+    output = model(dummy_input)
+    print("Output shape:", output.shape)

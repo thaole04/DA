@@ -3,6 +3,7 @@ import torch
 import torchvision.transforms as transforms
 from PIL import Image
 from torchsummary import summary
+import torch.quantization as quant
 
 # Import model wrapper đã tích hợp QuantStub/DeQuantStub
 from quantized_model import YoloNoAnchorQuantized
@@ -62,63 +63,71 @@ def main():
     model = YoloNoAnchorQuantized(num_classes=1).to(device)
     model.eval()
 
-    model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
-    torch.quantization.prepare(model, inplace=True)
-    torch.quantization.convert(model, inplace=True)
+   # Định nghĩa danh sách các module cần fuse (chỉ fuse Conv và BatchNorm)
+    fuse_modules = [
+        ["stage1_conv1.0", "stage1_conv1.1"],
+        ["stage1_conv2.0", "stage1_conv2.1"],
+        ["stage1_conv3.0", "stage1_conv3.1"],
+        ["stage1_conv4.0", "stage1_conv4.1"],
+        ["stage1_conv5.0", "stage1_conv5.1"],
+        ["stage1_conv6.0", "stage1_conv6.1"],
+        ["stage1_conv7.0", "stage1_conv7.1"],
+        ["stage1_conv8.0", "stage1_conv8.1"],
+        ["stage2_a_conv1.0", "stage2_a_conv1.1"],
+        ["stage2_a_conv2.0", "stage2_a_conv2.1"],
+        ["stage2_a_conv3.0", "stage2_a_conv3.1"]
+    ]
+
+    model.qconfig = torch.quantization.QConfig(
+        activation=torch.quantization.MinMaxObserver.with_args(
+            dtype=torch.quint8, qscheme=torch.per_tensor_symmetric, reduce_range=False
+        ),
+        weight=torch.quantization.MinMaxObserver.with_args(
+            dtype=torch.qint8, qscheme=torch.per_tensor_symmetric
+        )
+    )
+
+    # Fuse các module (Conv + BN) theo danh sách fuse_modules
+    model = quant.fuse_modules(model, fuse_modules, inplace=False)
+
+    model = quant.prepare(model, inplace=False)
+    model = quant.convert(model, inplace=False)
     
     # Load trọng số đã quantized (model đã được fuse & convert trước đó)
     weight_path = "yolo_no_anchor_quantized.pth"
     model.load_state_dict(torch.load(weight_path, map_location=device), strict=False)
     
-    # Hiển thị cấu trúc model và số lượng tham số
-    summary(model, (3, 256, 256))
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Số lượng tham số: {total_params}")
     
     transform = transforms.Compose([
         transforms.ToTensor(),
     ])
+    frame = cv2.imread("test.jpg")
+
+    # Resize frame về 256x256
+    frame_resized = cv2.resize(frame, (256, 256))
+    # Chuyển đổi BGR sang RGB
+    frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(frame_rgb)
+    input_tensor = transform(pil_img).unsqueeze(0).to(device)
     
-    # Mở webcam
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Không thể mở webcam!")
-        return
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Không nhận được frame từ webcam.")
-            break
-
-        # Resize frame về 256x256
-        frame_resized = cv2.resize(frame, (256, 256))
-        # Chuyển đổi BGR sang RGB
-        frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(frame_rgb)
-        input_tensor = transform(pil_img).unsqueeze(0).to(device)
-        
-        with torch.no_grad():
-            outputs = model(input_tensor)
-        
-        # Decode dự đoán
-        boxes = decode_predictions(outputs, conf_threshold=0.5, grid_size=8, img_size=256)
-        
-        # Nếu có dự đoán, chọn box có confidence cao nhất
-        if boxes:
-            best_box = max(boxes, key=lambda x: x[4])
-            x1, y1, x2, y2, conf = best_box
-            cv2.rectangle(frame_resized, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame_resized, f"Conf: {conf:.2f}", (x1, max(y1-10, 0)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        
-        cv2.imshow("YOLO No Anchor Detection", frame_resized)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
+    with torch.no_grad():
+        outputs = model(input_tensor)
+    
+    # Decode dự đoán
+    boxes = decode_predictions(outputs, conf_threshold=0.5, grid_size=8, img_size=256)
+    
+    # Nếu có dự đoán, chọn box có confidence cao nhất
+    if boxes:
+        best_box = max(boxes, key=lambda x: x[4])
+        x1, y1, x2, y2, conf = best_box
+        cv2.rectangle(frame_resized, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(frame_resized, f"Conf: {conf:.2f}", (x1, max(y1-10, 0)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    
+    cv2.imshow("YOLO No Anchor Detection", frame_resized)
+    cv2.waitKey(0)
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()

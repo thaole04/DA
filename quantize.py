@@ -49,10 +49,7 @@ def convert():
     # Tạo dataset và tách thành train/validation
     dataset = YOLODataset('train_20000_256', transform=transform)
     total_images = len(dataset)
-    calib_size = int(0.1 * total_images)
-    train_size = total_images - calib_size
-    train_dataset, calib_dataset = random_split(dataset, [train_size, calib_size])
-    calib_loader = DataLoader(calib_dataset, batch_size=16, shuffle=False, num_workers=4)
+    calib_loader = DataLoader(dataset, batch_size=1, shuffle=True)
 
     # Load model đã train (model gốc không quantize)
     model = YoloNoAnchorQuantized(num_classes=1)
@@ -74,7 +71,14 @@ def convert():
         ["stage2_a_conv3.0", "stage2_a_conv3.1"]
     ]
 
-    model.qconfig = quant.get_default_qconfig('fbgemm')
+    model.qconfig = torch.quantization.QConfig(
+    activation=torch.quantization.MinMaxObserver.with_args(
+        dtype=torch.quint8, qscheme=torch.per_tensor_symmetric, reduce_range=False
+    ),
+    weight=torch.quantization.MinMaxObserver.with_args(
+        dtype=torch.qint8, qscheme=torch.per_tensor_symmetric
+    )
+)
 
     # Fuse các module (Conv + BN) theo danh sách fuse_modules
     model_fused = quant.fuse_modules(model, fuse_modules, inplace=False)

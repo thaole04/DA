@@ -14,45 +14,45 @@ class YoloNoAnchorQuantized(nn.Module):
         self.stage1_conv1 = nn.Sequential(
             nn.Conv2d(3, 8, 3, 1, 1, bias=False),  # giảm từ 16 -> 8
             nn.BatchNorm2d(8),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.LeakyReLU(0.1, inplace=False),
             nn.MaxPool2d(2, 2)  # 256 -> 128
         )
         self.stage1_conv2 = nn.Sequential(
             nn.Conv2d(8, 16, 3, 1, 1, bias=False),  # giảm từ 32 -> 16
             nn.BatchNorm2d(16),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.LeakyReLU(0.1, inplace=False),
             nn.MaxPool2d(2, 2)  # 128 -> 64
         )
         self.stage1_conv3 = nn.Sequential(
             nn.Conv2d(16, 32, 3, 1, 1, bias=False),  # giảm từ 64 -> 32
             nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.1, inplace=True)
+            nn.LeakyReLU(0.1, inplace=False)
         )
         self.stage1_conv4 = nn.Sequential(
             nn.Conv2d(32, 16, 1, 1, 0, bias=False),  # giảm từ 64 -> 32, sau đó giảm xuống 16
             nn.BatchNorm2d(16),
-            nn.LeakyReLU(0.1, inplace=True)
+            nn.LeakyReLU(0.1, inplace=False)
         )
         self.stage1_conv5 = nn.Sequential(
             nn.Conv2d(16, 32, 3, 1, 1, bias=False),  # giảm từ 64 -> 32
             nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.LeakyReLU(0.1, inplace=False),
             nn.MaxPool2d(2, 2)  # 64 -> 32
         )
         self.stage1_conv6 = nn.Sequential(
             nn.Conv2d(32, 64, 3, 1, 1, bias=False),  # giảm từ 128 -> 64
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True)
+            nn.LeakyReLU(0.1, inplace=False)
         )
         self.stage1_conv7 = nn.Sequential(
             nn.Conv2d(64, 32, 1, 1, 0, bias=False),  # giảm từ 128 -> 64, sau đó giảm xuống 32
             nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.1, inplace=True)
+            nn.LeakyReLU(0.1, inplace=False)
         )
         self.stage1_conv8 = nn.Sequential(
             nn.Conv2d(32, 64, 3, 1, 1, bias=False),  # giảm từ 128 -> 64
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True),
+            nn.LeakyReLU(0.1, inplace=False),
             nn.MaxPool2d(2, 2)  # 32 -> 16
         )
 
@@ -61,17 +61,17 @@ class YoloNoAnchorQuantized(nn.Module):
         self.stage2_a_conv1 = nn.Sequential(
             nn.Conv2d(64, 128, 1, 1, 0, bias=False),  # giảm từ 256 -> 128
             nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.1, inplace=True)
+            nn.LeakyReLU(0.1, inplace=False)
         )
         self.stage2_a_conv2 = nn.Sequential(
             nn.Conv2d(128, 64, 1, 1, 0, bias=False),  # giảm từ 256 -> 128, sau đó giảm xuống 64
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True)
+            nn.LeakyReLU(0.1, inplace=False)
         )
         self.stage2_a_conv3 = nn.Sequential(
             nn.Conv2d(64, 128, 1, 1, 0, bias=False),  # giảm từ 256 -> 128
             nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.1, inplace=True)
+            nn.LeakyReLU(0.1, inplace=False)
         )
         # --- Lớp output ---
         self.output_conv = nn.Conv2d(128, (5 + num_classes), 1, 1, 0, bias=True)
@@ -93,16 +93,3 @@ class YoloNoAnchorQuantized(nn.Module):
         x = self.output_conv(x)
         x = self.dequant(x)
         return x
-
-if __name__ == "__main__":
-    # Khởi tạo model và hiển thị summary
-    model = YoloNoAnchorQuantized(num_classes=1)
-    
-    # Nếu muốn chuẩn bị cho quantization (QAT hoặc post-training quant), 
-    # bạn có thể đặt cấu hình quantization cho model:
-    model.qconfig = quant.get_default_qat_qconfig('fbgemm')
-    # Hoặc dùng: quant.get_default_qconfig('fbgemm') cho post-training static quantization
-    # Sau đó có thể thực hiện fuse các module Conv-BN-ReLU nếu cần.
-
-    # Hiển thị summary của model
-    summary(model, (3, 256, 256))

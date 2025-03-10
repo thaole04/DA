@@ -53,28 +53,21 @@ def main():
     
     # Danh sách các module cần fuse (chỉ fuse Conv và BatchNorm)
     fuse_modules = [
-        ["stage1_conv1.0", "stage1_conv1.1"],
-        ["stage1_conv2.0", "stage1_conv2.1"],
-        ["stage1_conv3.0", "stage1_conv3.1"],
-        ["stage1_conv4.0", "stage1_conv4.1"],
-        ["stage1_conv5.0", "stage1_conv5.1"],
-        ["stage1_conv6.0", "stage1_conv6.1"],
-        ["stage1_conv7.0", "stage1_conv7.1"],
-        ["stage1_conv8.0", "stage1_conv8.1"],
-        ["stage2_a_conv1.0", "stage2_a_conv1.1"],
-        ["stage2_a_conv2.0", "stage2_a_conv2.1"],
-        ["stage2_a_conv3.0", "stage2_a_conv3.1"]
+        ["conv1", "bn1", "relu1"],
+        ["conv2", "bn2", "relu2"],
+        ["conv3", "bn3", "relu3"],
+        ["conv4", "bn4", "relu4"],
+        ["conv5", "bn5", "relu5"],
+        ["conv6", "bn6", "relu6"],
+        ["conv7", "bn7", "relu7"],
+        ["conv8", "bn8", "relu8"],
+        ["conv9", "bn9", "relu9"],
+        ["conv10", "bn10", "relu10"],
+        ["conv11", "bn11", "relu11"],
     ]
     
     # Đặt qconfig sử dụng MinMaxObserver theo dạng symmetric int8
-    model.qconfig = torch.quantization.QConfig(
-        activation=torch.quantization.MinMaxObserver.with_args(
-            dtype=torch.quint8, qscheme=torch.per_tensor_symmetric, reduce_range=False
-        ),
-        weight=torch.quantization.MinMaxObserver.with_args(
-            dtype=torch.qint8, qscheme=torch.per_tensor_symmetric
-        )
-    )
+    model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
     
     # Fuse các module
     model = quant.fuse_modules(model, fuse_modules, inplace=False)
@@ -98,7 +91,7 @@ def main():
     ])
     
     # Đọc danh sách ảnh từ thư mục "images"
-    images_folder = "test_1"  # thay đổi nếu cần
+    images_folder = "test_0"  # thay đổi nếu cần
     image_paths = [os.path.join(images_folder, f) for f in os.listdir(images_folder)
                    if f.lower().endswith((".jpg", ".jpeg", ".png"))]
     if not image_paths:

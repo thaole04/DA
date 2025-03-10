@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.quantization as quant
 from torchsummary import summary
 
+
 class YoloNoAnchorQuantized(nn.Module):
     def __init__(self, num_classes=1):
         super(YoloNoAnchorQuantized, self).__init__()
@@ -11,85 +12,136 @@ class YoloNoAnchorQuantized(nn.Module):
         self.dequant = quant.DeQuantStub()
 
         # --- Stage 1 ---
-        self.stage1_conv1 = nn.Sequential(
-            nn.Conv2d(3, 8, 3, 1, 1, bias=False),  # giảm từ 16 -> 8
-            nn.BatchNorm2d(8),
-            nn.LeakyReLU(0.1, inplace=False),
-            nn.MaxPool2d(2, 2)  # 256 -> 128
-        )
-        self.stage1_conv2 = nn.Sequential(
-            nn.Conv2d(8, 16, 3, 1, 1, bias=False),  # giảm từ 32 -> 16
-            nn.BatchNorm2d(16),
-            nn.LeakyReLU(0.1, inplace=False),
-            nn.MaxPool2d(2, 2)  # 128 -> 64
-        )
-        self.stage1_conv3 = nn.Sequential(
-            nn.Conv2d(16, 32, 3, 1, 1, bias=False),  # giảm từ 64 -> 32
-            nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.1, inplace=False)
-        )
-        self.stage1_conv4 = nn.Sequential(
-            nn.Conv2d(32, 16, 1, 1, 0, bias=False),  # giảm từ 64 -> 32, sau đó giảm xuống 16
-            nn.BatchNorm2d(16),
-            nn.LeakyReLU(0.1, inplace=False)
-        )
-        self.stage1_conv5 = nn.Sequential(
-            nn.Conv2d(16, 32, 3, 1, 1, bias=False),  # giảm từ 64 -> 32
-            nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.1, inplace=False),
-            nn.MaxPool2d(2, 2)  # 64 -> 32
-        )
-        self.stage1_conv6 = nn.Sequential(
-            nn.Conv2d(32, 64, 3, 1, 1, bias=False),  # giảm từ 128 -> 64
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=False)
-        )
-        self.stage1_conv7 = nn.Sequential(
-            nn.Conv2d(64, 32, 1, 1, 0, bias=False),  # giảm từ 128 -> 64, sau đó giảm xuống 32
-            nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.1, inplace=False)
-        )
-        self.stage1_conv8 = nn.Sequential(
-            nn.Conv2d(32, 64, 3, 1, 1, bias=False),  # giảm từ 128 -> 64
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=False),
-            nn.MaxPool2d(2, 2)  # 32 -> 16
-        )
-
+        # Block 1:
+        self.conv1 = nn.Conv2d(3, 8, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1   = nn.BatchNorm2d(8)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        # Block 2:
+        self.conv2 = nn.Conv2d(8, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2   = nn.BatchNorm2d(16)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        # Block 3:
+        self.conv3 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn3   = nn.BatchNorm2d(32)
+        self.relu3 = nn.ReLU(inplace=True)
+        
+        # Block 4:
+        self.conv4 = nn.Conv2d(32, 16, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn4   = nn.BatchNorm2d(16)
+        self.relu4 = nn.ReLU(inplace=True)
+        
+        # Block 5:
+        self.conv5 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn5   = nn.BatchNorm2d(32)
+        self.relu5 = nn.ReLU(inplace=True)
+        self.pool5 = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        # Block 6:
+        self.conv6 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn6   = nn.BatchNorm2d(64)
+        self.relu6 = nn.ReLU(inplace=True)
+        
+        # Block 7:
+        self.conv7 = nn.Conv2d(64, 32, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn7   = nn.BatchNorm2d(32)
+        self.relu7 = nn.ReLU(inplace=True)
+        
+        # Block 8:
+        self.conv8 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn8   = nn.BatchNorm2d(64)
+        self.relu8 = nn.ReLU(inplace=True)
+        self.pool8 = nn.MaxPool2d(kernel_size=2, stride=2)
+        
         # --- Stage 2a (đơn giản hóa) ---
-        self.stage2_a_maxpl = nn.MaxPool2d(2, 2)  # 16 -> 8
-        self.stage2_a_conv1 = nn.Sequential(
-            nn.Conv2d(64, 128, 1, 1, 0, bias=False),  # giảm từ 256 -> 128
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.1, inplace=False)
-        )
-        self.stage2_a_conv2 = nn.Sequential(
-            nn.Conv2d(128, 64, 1, 1, 0, bias=False),  # giảm từ 256 -> 128, sau đó giảm xuống 64
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=False)
-        )
-        self.stage2_a_conv3 = nn.Sequential(
-            nn.Conv2d(64, 128, 1, 1, 0, bias=False),  # giảm từ 256 -> 128
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.1, inplace=False)
-        )
+        self.pool_stage2a = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        # Conv block 9:
+        self.conv9 = nn.Conv2d(64, 128, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn9   = nn.BatchNorm2d(128)
+        self.relu9 = nn.ReLU(inplace=True)
+        
+        # Conv block 10:
+        self.conv10 = nn.Conv2d(128, 64, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn10   = nn.BatchNorm2d(64)
+        self.relu10 = nn.ReLU(inplace=True)
+        
+        # Conv block 11:
+        self.conv11 = nn.Conv2d(64, 128, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn11   = nn.BatchNorm2d(128)
+        self.relu11 = nn.ReLU(inplace=True)
+        
         # --- Lớp output ---
-        self.output_conv = nn.Conv2d(128, (5 + num_classes), 1, 1, 0, bias=True)
+        self.out_conv = nn.Conv2d(128, 5 + num_classes, kernel_size=1, stride=1, padding=0, bias=True)
 
     def forward(self, x):
         x = self.quant(x)
-        x = self.stage1_conv1(x)
-        x = self.stage1_conv2(x)
-        x = self.stage1_conv3(x)
-        x = self.stage1_conv4(x)
-        x = self.stage1_conv5(x)
-        x = self.stage1_conv6(x)
-        x = self.stage1_conv7(x)
-        x = self.stage1_conv8(x)
-        x = self.stage2_a_maxpl(x)
-        x = self.stage2_a_conv1(x)
-        x = self.stage2_a_conv2(x)
-        x = self.stage2_a_conv3(x)
-        x = self.output_conv(x)
+        # Stage 1, Block 1:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu1(x)
+        x = self.pool1(x)
+        
+        # Block 2:
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu2(x)
+        x = self.pool2(x)
+        
+        # Block 3:
+        x = self.conv3(x)
+        x = self.bn3(x)
+        x = self.relu3(x)
+        
+        # Block 4:
+        x = self.conv4(x)
+        x = self.bn4(x)
+        x = self.relu4(x)
+        
+        # Block 5:
+        x = self.conv5(x)
+        x = self.bn5(x)
+        x = self.relu5(x)
+        x = self.pool5(x)
+        
+        # Block 6:
+        x = self.conv6(x)
+        x = self.bn6(x)
+        x = self.relu6(x)
+        
+        # Block 7:
+        x = self.conv7(x)
+        x = self.bn7(x)
+        x = self.relu7(x)
+        
+        # Block 8:
+        x = self.conv8(x)
+        x = self.bn8(x)
+        x = self.relu8(x)
+        x = self.pool8(x)
+        
+        # Stage 2a:
+        x = self.pool_stage2a(x)
+        x = self.conv9(x)
+        x = self.bn9(x)
+        x = self.relu9(x)
+        
+        x = self.conv10(x)
+        x = self.bn10(x)
+        x = self.relu10(x)
+        
+        x = self.conv11(x)
+        x = self.bn11(x)
+        x = self.relu11(x)
+        
+        # Lớp output:
+        x = self.out_conv(x)
         x = self.dequant(x)
         return x
+
+if __name__ == '__main__':
+    model = YoloNoAnchorQuantized()
+    summary(model, (3, 256, 256))

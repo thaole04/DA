@@ -1,5 +1,7 @@
 import cv2
 import torch
+import os
+import random
 import torch.nn as nn
 import torchvision.transforms as transforms
 from PIL import Image
@@ -77,21 +79,23 @@ def main():
         transforms.ToTensor(),
     ])
     
-    # Mở webcam
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Không thể mở webcam!")
+    # Đọc danh sách ảnh từ thư mục "images"
+    images_folder = "test_1"  # thay đổi nếu cần
+    image_paths = [os.path.join(images_folder, f) for f in os.listdir(images_folder)
+                   if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+    if not image_paths:
+        print("Không tìm thấy ảnh trong thư mục", images_folder)
         return
-
+    
+    print("Nhấn 'n' để load ảnh ngẫu nhiên, nhấn 'q' để thoát.")
+    
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Không nhận được frame từ webcam.")
-            break
-
-        # Resize frame về 256x256
+        # Lấy ảnh ngẫu nhiên
+        img_path = random.choice(image_paths)
+        frame = cv2.imread(img_path)
+        if frame is None:
+            continue
         frame_resized = cv2.resize(frame, (256, 256))
-        # Chuyển đổi BGR sang RGB
         frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(frame_rgb)
         input_tensor = transform(pil_img).unsqueeze(0).to(device)
@@ -99,23 +103,21 @@ def main():
         with torch.no_grad():
             outputs = model(input_tensor)
         
-        # Decode dự đoán
-        boxes = decode_predictions(outputs, conf_threshold=0.3, grid_size=8, img_size=256)
-        
-        # Vì mỗi ảnh chỉ có 1 đối tượng, chọn box có confidence cao nhất (nếu có)
+        boxes = decode_predictions(outputs, conf_threshold=0.5, grid_size=8, img_size=256)
         if boxes:
             best_box = max(boxes, key=lambda x: x[4])
             x1, y1, x2, y2, conf = best_box
             cv2.rectangle(frame_resized, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame_resized, f"Conf: {conf:.2f}", (x1, y1 - 10),
+            cv2.putText(frame_resized, f"Conf: {conf:.2f}", (x1, max(y1-10, 0)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
         cv2.imshow("YOLO No Anchor Detection", frame_resized)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        key = cv2.waitKey(0) & 0xFF
+        if key == ord('q'):
             break
-
-    cap.release()
+        elif key == ord('n'):
+            continue
+    
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":

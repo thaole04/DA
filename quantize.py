@@ -48,8 +48,11 @@ def convert():
     ])
     # Tạo dataset và tách thành train/validation
     dataset = YOLODataset('train_20000_256', transform=transform)
-    total_images = len(dataset)
-    calib_loader = DataLoader(dataset, batch_size=1, shuffle=True)
+    calib_num = int(0.1 * len(dataset))
+    train_num = len(dataset) - calib_num
+    train_dataset, calib_dataset = random_split(dataset, [train_num, calib_num])
+    train_dataset = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    calib_loader = DataLoader(calib_dataset, batch_size=32, shuffle=False)
 
     # Load model đã train (model gốc không quantize)
     model = YoloNoAnchorQuantized(num_classes=1)
@@ -58,27 +61,20 @@ def convert():
 
     # Định nghĩa danh sách các module cần fuse (chỉ fuse Conv và BatchNorm)
     fuse_modules = [
-        ["stage1_conv1.0", "stage1_conv1.1"],
-        ["stage1_conv2.0", "stage1_conv2.1"],
-        ["stage1_conv3.0", "stage1_conv3.1"],
-        ["stage1_conv4.0", "stage1_conv4.1"],
-        ["stage1_conv5.0", "stage1_conv5.1"],
-        ["stage1_conv6.0", "stage1_conv6.1"],
-        ["stage1_conv7.0", "stage1_conv7.1"],
-        ["stage1_conv8.0", "stage1_conv8.1"],
-        ["stage2_a_conv1.0", "stage2_a_conv1.1"],
-        ["stage2_a_conv2.0", "stage2_a_conv2.1"],
-        ["stage2_a_conv3.0", "stage2_a_conv3.1"]
+        ["conv1", "bn1", "relu1"],
+        ["conv2", "bn2", "relu2"],
+        ["conv3", "bn3", "relu3"],
+        ["conv4", "bn4", "relu4"],
+        ["conv5", "bn5", "relu5"],
+        ["conv6", "bn6", "relu6"],
+        ["conv7", "bn7", "relu7"],
+        ["conv8", "bn8", "relu8"],
+        ["conv9", "bn9", "relu9"],
+        ["conv10", "bn10", "relu10"],
+        ["conv11", "bn11", "relu11"],
     ]
 
-    model.qconfig = torch.quantization.QConfig(
-    activation=torch.quantization.MinMaxObserver.with_args(
-        dtype=torch.quint8, qscheme=torch.per_tensor_symmetric, reduce_range=False
-    ),
-    weight=torch.quantization.MinMaxObserver.with_args(
-        dtype=torch.qint8, qscheme=torch.per_tensor_symmetric
-    )
-)
+    model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
 
     # Fuse các module (Conv + BN) theo danh sách fuse_modules
     model_fused = quant.fuse_modules(model, fuse_modules, inplace=False)

@@ -64,6 +64,7 @@ def compute_yolo_loss(predictions, targets, grid_size=8, lambda_coord=5, lambda_
     B = predictions.size(0)
     device = predictions.device
     num_classes = predictions.size(1) - 5
+    grid_size = predictions.size(2)
 
     # Tạo các target tensor cho toàn bộ grid cell
     target_obj = torch.zeros((B, grid_size, grid_size), device=device)    # objectness
@@ -137,7 +138,7 @@ def main():
     # Tạo dataset và tách thành train/validation
     dataset = YOLODataset(root_dir, transform=transform)
     total_images = len(dataset)
-    valid_size = 1000 if total_images >= 1000 else int(total_images * 0.1)
+    valid_size = 1000
     train_size = total_images - valid_size
     train_dataset, valid_dataset = random_split(dataset, [train_size, valid_size])
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)

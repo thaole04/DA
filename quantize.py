@@ -1,5 +1,5 @@
 from quantized_model import YoloNoAnchorQuantized
-from torch.quantization.observer import MovingAverageMinMaxObserver
+from torch.quantization.observer import MovingAverageMinMaxObserver, PerChannelMinMaxObserver
 import torch
 import torch.quantization as quant
 from torch.utils.data import Dataset, DataLoader, random_split
@@ -47,12 +47,8 @@ def convert():
         transforms.ToTensor(),
     ])
     # Tạo dataset và tách thành train/validation
-    dataset = YOLODataset('train_20000_256', transform=transform)
-    calib_num = int(0.1 * len(dataset))
-    train_num = len(dataset) - calib_num
-    train_dataset, calib_dataset = random_split(dataset, [train_num, calib_num])
-    train_dataset = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    calib_loader = DataLoader(calib_dataset, batch_size=32, shuffle=False)
+    dataset = YOLODataset('calib', transform=transform)
+    calib_loader = DataLoader(dataset, batch_size=16, shuffle=False)
 
     # Load model đã train (model gốc không quantize)
     model = YoloNoAnchorQuantized(num_classes=1)
@@ -74,7 +70,12 @@ def convert():
         ["conv11", "bn11", "relu11"],
     ]
 
-    model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+    # model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+    # q config moving average min max observer
+    model.qconfig = torch.quantization.QConfig(
+        activation=quant.MinMaxObserver.with_args(qscheme=torch.per_tensor_symmetric, dtype=torch.quint8),
+        weight=quant.HistogramObserver.with_args(qscheme=torch.per_tensor_symmetric, dtype=torch.qint8)
+    )
 
     # Fuse các module (Conv + BN) theo danh sách fuse_modules
     model_fused = quant.fuse_modules(model, fuse_modules, inplace=False)

@@ -113,12 +113,12 @@ def main():
     ])
     
     # Tạo dataset từ thư mục "train/images" và "train/labels"
-    image_paths = sorted(glob.glob(os.path.join("../go_to_quantize_qta/train_prepared", "images", "*.jpg")))
+    image_paths = sorted(glob.glob(os.path.join("train_20000_256", "images", "*.jpg")))
     dataset = []
     for path in image_paths:
         img = Image.open(path).convert("RGB")
         base_name = os.path.basename(path).replace(".jpg", ".txt")
-        label_path = os.path.join("../go_to_quantize_qta/train_prepared", "labels", base_name)
+        label_path = os.path.join("../train_20000_256", "labels", base_name)
         boxes = []
         if os.path.exists(label_path):
             with open(label_path, "r") as f:

@@ -2,6 +2,7 @@ import os
 import random
 import cv2
 import glob
+import time
 import torch
 import torchvision.transforms as transforms
 from torch.quantization import MovingAverageMinMaxObserver, MinMaxObserver, HistogramObserver
@@ -148,7 +149,7 @@ def main():
     transform = transforms.Compose([
         transforms.ToTensor(),
     ])
-    haha = 2
+    haha = 0
     if haha == 0:
         # Đọc ảnh từ file
         img_path = "xemay.jpg"
@@ -165,10 +166,14 @@ def main():
         # print(input_tensor)
         # print("--------------------------------")
         print(input_tensor.int_repr())
+        start_time = 0 
+        end_time = 0
 
         with torch.no_grad():
             print_first_layer_output(model_quant, input_tensor)
+            start_time = time.time()
             outputs = model_quant(input_tensor)
+            end_time = time.time()
         
         boxes = decode_predictions(outputs, conf_threshold=0.5, grid_size=8, img_size=256)
         if boxes:
@@ -177,6 +182,7 @@ def main():
             cv2.rectangle(frame_resized, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(frame_resized, f"Conf: {conf:.2f}", (x1, max(y1-10, 0)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            print(end_time - start_time)
         
         cv2.imshow("Detection", frame_resized)
         cv2.waitKey(0)

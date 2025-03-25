@@ -11,7 +11,26 @@ from torchsummary import summary
 # Model: YOLO không sử dụng anchor box
 # -----------------------------
 from model import YoloNoAnchor
+def print_first_layer_output(model, input_tensor):
+    # Tạo biến chứa output từ layer đầu tiên
+    outputs = {}
 
+    # Định nghĩa hook function để lưu output của layer đầu tiên
+    def hook_fn(module, input, output):
+        outputs['first_layer'] = output
+
+    # Giả sử sau fuse, layer đầu tiên là module 'conv1' (đã được fuse với bn1 và relu1)
+    hook_handle = model.relu1.register_forward_hook(hook_fn)
+    
+    # Chạy forward pass để hook được kích hoạt
+    _ = model(input_tensor)
+    
+    # Sau khi lấy output, hủy hook để không ảnh hưởng đến forward sau này
+    hook_handle.remove()
+    
+    # In ra kết quả của layer đầu tiên 
+    print("Output sau layer đầu tiên (conv1 fuse block):")
+    print(outputs['first_layer'])
 
 # -----------------------------
 # Hàm decode output từ model
@@ -79,28 +98,25 @@ def main():
         transforms.ToTensor(),
     ])
     
-    # Đọc danh sách ảnh từ thư mục "images"
-    images_folder = "test_1"  # thay đổi nếu cần
-    image_paths = [os.path.join(images_folder, f) for f in os.listdir(images_folder)
-                   if f.lower().endswith((".jpg", ".jpeg", ".png"))]
-    if not image_paths:
-        print("Không tìm thấy ảnh trong thư mục", images_folder)
-        return
-    
-    print("Nhấn 'n' để load ảnh ngẫu nhiên, nhấn 'q' để thoát.")
-    
-    while True:
-        # Lấy ảnh ngẫu nhiên
-        img_path = random.choice(image_paths)
+    haha = 0
+    if haha == 0:
+        # Đọc ảnh từ file
+        img_path = "xemay.jpg"
         frame = cv2.imread(img_path)
         if frame is None:
-            continue
+            print("Không thể đọc ảnh", img_path)
+            return
         frame_resized = cv2.resize(frame, (256, 256))
         frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(frame_rgb)
         input_tensor = transform(pil_img).unsqueeze(0).to(device)
-        
+        # input_tensor = torch.quantize_per_tensor(input_tensor, scale=1/255, zero_point=0, dtype=torch.quint8)
+        # print(input_tensor)
+        # print("--------------------------------")
+        # print(input_tensor.int_repr())
+
         with torch.no_grad():
+            print_first_layer_output(model, input_tensor)
             outputs = model(input_tensor)
         
         boxes = decode_predictions(outputs, conf_threshold=0.5, grid_size=8, img_size=256)
@@ -111,14 +127,103 @@ def main():
             cv2.putText(frame_resized, f"Conf: {conf:.2f}", (x1, max(y1-10, 0)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
-        cv2.imshow("YOLO No Anchor Detection", frame_resized)
-        key = cv2.waitKey(0) & 0xFF
-        if key == ord('q'):
-            break
-        elif key == ord('n'):
-            continue
-    
-    cv2.destroyAllWindows()
+        cv2.imshow("Detection", frame_resized)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+    elif haha == 1:
+        # Đọc danh sách ảnh từ thư mục "images"
+        images_folder = "test_1"  # thay đổi nếu cần
+        image_paths = [os.path.join(images_folder, f) for f in os.listdir(images_folder)
+                    if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+        if not image_paths:
+            print("Không tìm thấy ảnh trong thư mục", images_folder)
+            return
+        
+        print("Nhấn 'n' để load ảnh ngẫu nhiên, nhấn 'q' để thoát.")
+        
+        while True:
+            # Lấy ảnh ngẫu nhiên
+            img_path = random.choice(image_paths)
+            frame = cv2.imread(img_path)
+            if frame is None:
+                continue
+            frame_resized = cv2.resize(frame, (256, 256))
+            frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(frame_rgb)
+            input_tensor = transform(pil_img).unsqueeze(0).to(device)
+            # convert to quantized model
+            input_tensor = torch.quantize_per_tensor(input_tensor, scale=1/255, zero_point=0, dtype=torch.quint8)
+            # print(input_tensor)
+            
+            with torch.no_grad():
+                # tính thời gian xử lý
+                # start = cv2.getTickCount()
+                print_first_layer_output(model, input_tensor)
+                outputs = model(input_tensor)
+                # end = cv2.getTickCount()
+                # print("Time: %.2fms" % ((end - start) / cv2.getTickFrequency() * 1000))
+                # print("fps: %.2f" % (cv2.getTickFrequency() / (end - start)))
+                # print outputs
+                # print(outputs)
+            
+            boxes = decode_predictions(outputs, conf_threshold=0.5, grid_size=8, img_size=256)
+            if boxes:
+                best_box = max(boxes, key=lambda x: x[4])
+                x1, y1, x2, y2, conf = best_box
+                cv2.rectangle(frame_resized, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame_resized, f"Conf: {conf:.2f}", (x1, max(y1-10, 0)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            
+            cv2.imshow("Detection", frame_resized)
+            key = cv2.waitKey(0) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord('n'):
+                continue
+            cv2.destroyAllWindows()
+    elif haha == 2:
+        # Mở webcam
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("Không thể mở webcam!")
+            return
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("Không nhận được frame từ webcam.")
+                break
+
+            # Resize frame về 256x256
+            frame_resized = cv2.resize(frame, (256, 256))
+            # Chuyển đổi BGR sang RGB
+            frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(frame_rgb)
+            input_tensor = transform(pil_img).unsqueeze(0).to(device)
+            input_tensor = torch.quantize_per_tensor(input_tensor, scale=1/255, zero_point=0, dtype=torch.quint8)
+            
+            with torch.no_grad():
+                print_first_layer_output(model, input_tensor)
+                outputs = model(input_tensor)
+            
+            # Decode dự đoán
+            boxes = decode_predictions(outputs, conf_threshold=0.5, grid_size=8, img_size=256)
+            
+            # Nếu có dự đoán, chọn box có confidence cao nhất
+            if boxes:
+                best_box = max(boxes, key=lambda x: x[4])
+                x1, y1, x2, y2, conf = best_box
+                cv2.rectangle(frame_resized, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame_resized, f"Conf: {conf:.2f}", (x1, max(y1-10, 0)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            
+            cv2.imshow("YOLO No Anchor Detection", frame_resized)
+            
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        cap.release()
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()

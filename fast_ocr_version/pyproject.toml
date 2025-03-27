@@ -1,0 +1,158 @@
+[tool.poetry]
+name = "fast-plate-ocr"
+version = "0.3.0"
+description = "Fast & Lightweight OCR for vehicle license plates."
+authors = ["ankandrew <61120139+ankandrew@users.noreply.github.com>"]
+readme = "README.md"
+repository = "https://github.com/ankandrew/fast-plate-ocr/"
+documentation = "https://ankandrew.github.io/fast-plate-ocr"
+keywords = ["plate-recognition", "license-plate-recognition", "license-plate-ocr"]
+license = "MIT"
+classifiers = [
+    "Typing :: Typed",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+# Packages required for doing inference
+numpy = ">=1.20"
+opencv-python = "*"
+pyyaml = ">=5.1"
+tqdm = "*"
+rich = "*"
+
+# Install onnxruntime-gpu only on systems other than macOS or Raspberry Pi
+onnxruntime-gpu = { version = ">=1.19.2", markers = "sys_platform != 'darwin' and platform_machine != 'armv7l' and platform_machine != 'aarch64' and (platform_system == 'Linux' or platform_system == 'Windows')" }
+# Fallback to onnxruntime for macOS, Raspberry Pi, and other unsupported platforms
+onnxruntime = { version = ">=1.19.2", markers = "sys_platform == 'darwin' or platform_machine == 'armv7l' or platform_machine == 'aarch64'" }
+
+# Training packages are optional
+albumentations = { version = "*", optional = true }
+click = { version = "*", optional = true }
+keras = { version = ">=3.1.1", optional = true }
+matplotlib = { version = "*", optional = true }
+pandas = { version   = "*", optional = true }
+pydantic = { version = "^2.0.0", optional = true }
+tensorboard = { version = "*", optional = true }
+tensorflow = { version = "*", optional = true }
+tf2onnx = { version = "*", optional = true }
+torch = { version = "*", optional = true }
+
+# Optional packages for creating the docs
+mkdocs-material = { version = "*", optional = true }
+mkdocstrings = {version = "*", extras = ["python"], optional = true}
+mike = { version = "*", optional = true }
+onnxsim = { version = ">0.4.10", optional = true }
+
+[tool.poetry.extras]
+train = [
+    "albumentations",
+    "click",
+    "keras",
+    "matplotlib",
+    "pandas",
+    "pydantic",
+    "tensorboard",
+    "tensorflow",
+    "tf2onnx",
+    "torch",
+    "onnxsim",
+]
+docs = ["mkdocs-material", "mkdocstrings", "mike"]
+
+[tool.poetry.group.test.dependencies]
+pytest = "*"
+
+[tool.poetry.group.dev.dependencies]
+mypy = "*"
+ruff = "*"
+pandas-stubs = "^2.2.0.240218"
+pylint = "*"
+types-pyyaml = "^6.0.12.20240311"
+
+[tool.poetry.scripts]
+fast_plate_ocr = "fast_plate_ocr.cli.cli:main_cli"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    "W",
+    # Pyflakes
+    "F",
+    # pep8-naming
+    "N",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # flake8-unused-arguments
+    "ARG",
+    # Pylint
+    "PL",
+    # Perflint
+    "PERF",
+    # Ruff-specific rules
+    "RUF",
+    # pandas-vet
+    "PD",
+]
+ignore = ["N812", "PLR2004", "PD011"]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.pylint]
+max-args = 8
+
+[tool.ruff.format]
+line-ending = "lf"
+
+[tool.mypy]
+disable_error_code = "import-untyped"
+[[tool.mypy.overrides]]
+module = ["albumentations"]
+ignore_missing_imports = true
+
+[tool.pylint.typecheck]
+generated-members = ["cv2.*"]
+signature-mutators = [
+    "click.decorators.option",
+    "click.decorators.argument",
+    "click.decorators.version_option",
+    "click.decorators.help_option",
+    "click.decorators.pass_context",
+    "click.decorators.confirmation_option"
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint."messages control"]
+disable = ["missing-class-docstring", "missing-function-docstring", "wrong-import-order"]
+
+[tool.pylint.design]
+max-args = 8
+min-public-methods = 1
+
+[tool.pylint.basic]
+no-docstring-rgx = "^__|^test_"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

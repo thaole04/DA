@@ -1,172 +1,132 @@
-module line_buffer #(
-    parameter IMG_WIDTH = 6,           // Chiều rộng ảnh
-    parameter IMG_HEIGHT = 6,          // Chiều cao ảnh
-    parameter CHANNELS = 3,            // Số kênh màu
-    parameter KERNEL_SIZE = 3,         // Kích thước kernel
-    parameter PADDING = 1,             // Padding (0: không padding, 1: padding 1 pixel,...)
-    parameter DATA_WIDTH = 8           // Độ rộng bit dữ liệu
+`timescale 1ns / 1ps
+
+module line_buffer#(
+    // Layer parameters
+    parameter DATA_WIDTH = 8,
+    parameter IN_CHANNEL = 3,
+    parameter IN_WIDTH   = 32,
+    parameter IN_HEIGHT  = 32,
+
+    // Conv parameters
+    parameter KERNEL_0   = 3,
+    parameter KERNEL_1   = 3,
+    parameter DILATION_0 = 1,
+    parameter DILATION_1 = 1,
+    parameter PADDING_0  = 1,
+    parameter PADDING_1  = 1,
+    parameter STRIDE_0   = 1,
+    parameter STRIDE_1   = 1
 )(
-    input wire clk,
-    input wire rst_n,
-    
-    // Giao tiếp với FIFO đầu vào
-    output reg fifo_read_en,
-    input wire [DATA_WIDTH*CHANNELS-1:0] fifo_data,
-    input wire fifo_empty,
-    
-    // Đầu ra cửa sổ
-    output reg window_valid,
-    output reg [DATA_WIDTH*KERNEL_SIZE*KERNEL_SIZE*CHANNELS-1:0] window_data,
-    input wire window_ready
+    o_data,
+    o_valid,
+    fifo_rd_en,
+    i_data,
+    i_valid,
+    fifo_almost_full,
+    pe_ready,
+    pe_ack,
+    clk,
+    rst_n
 );
-    
-    // Kích thước ảnh sau khi padding
-    localparam PADDED_WIDTH = IMG_WIDTH + 2*PADDING;
-    localparam PADDED_HEIGHT = IMG_HEIGHT + 2*PADDING;
-    
-    // Các buffer cho từng kênh màu
-    reg [DATA_WIDTH-1:0] buffer_r [0:PADDED_HEIGHT-1][0:PADDED_WIDTH-1];
-    reg [DATA_WIDTH-1:0] buffer_g [0:PADDED_HEIGHT-1][0:PADDED_WIDTH-1];
-    reg [DATA_WIDTH-1:0] buffer_b [0:PADDED_HEIGHT-1][0:PADDED_WIDTH-1];
-    
-    // Biến đếm và điều khiển
-    reg [7:0] row_cnt, col_cnt;
-    reg [7:0] window_row, window_col;
-    reg loading_done;
-    reg processed_last_window;  // Biến mới để theo dõi cửa sổ cuối cùng
-    
-    // Các trạng thái
-    localparam IDLE = 2'd0;
-    localparam LOAD = 2'd1;
-    localparam PROCESS = 2'd2;
-    localparam DONE = 2'd3;
-    
-    reg [1:0] state;
-    
-    // Tín hiệu đệm
-    wire [DATA_WIDTH-1:0] data_b = fifo_data[3*DATA_WIDTH-1:2*DATA_WIDTH]; 
-    wire [DATA_WIDTH-1:0] data_g = fifo_data[2*DATA_WIDTH-1:DATA_WIDTH];   
-    wire [DATA_WIDTH-1:0] data_r = fifo_data[DATA_WIDTH-1:0];              
-    
-    integer i, j, k, m, n, ch;
-    
-    always @(posedge clk or negedge rst_n) begin
-        if (~rst_n) begin
-            state <= IDLE;
-            fifo_read_en <= 0;
-            window_valid <= 0;
-            loading_done <= 0;
-            row_cnt <= 0;
-            col_cnt <= 0;
-            window_row <= 0;
-            window_col <= 0;
-            processed_last_window <= 0;
-            
-            // Khởi tạo buffer với giá trị padding (0)
-            for (i = 0; i < PADDED_HEIGHT; i = i + 1) begin
-                for (j = 0; j < PADDED_WIDTH; j = j + 1) begin
-                    buffer_r[i][j] <= 0;
-                    buffer_g[i][j] <= 0;
-                    buffer_b[i][j] <= 0;
+
+    localparam PIXEL_WIDTH    = DATA_WIDTH * IN_CHANNEL;
+    localparam TOTAL_WIDTH    = IN_WIDTH + PADDING_1 * 2;
+    localparam WINDOW_0       = DILATION_0 * (KERNEL_0 - 1) + 1;
+    localparam WINDOW_1       = DILATION_1 * (KERNEL_1 - 1) + 1;
+    localparam KERNEL_PTS     = KERNEL_0 * KERNEL_1;
+    localparam BLANK_PTS      = num_blank_pts(0);
+    localparam BLANK_PTS_SAFE = BLANK_PTS > 0 ? BLANK_PTS : 1;
+
+    output [PIXEL_WIDTH*KERNEL_PTS-1:0] o_data;
+    output                              o_valid;
+    output                              fifo_rd_en;
+    input  [PIXEL_WIDTH-1:0]            i_data;
+    input                               i_valid;
+    input                               fifo_almost_full;
+    input                               pe_ready;
+    input                               pe_ack;
+    input                               clk;
+    input                               rst_n;
+
+    wire [BLANK_PTS_SAFE-1:0] out_blank;
+    wire                      is_padding;
+    wire                      shift;
+
+    line_buffer_controller #(
+        .DATA_WIDTH       (DATA_WIDTH),
+        .IN_CHANNEL       (IN_CHANNEL),
+        .IN_WIDTH         (IN_WIDTH),
+        .IN_HEIGHT        (IN_HEIGHT),
+        .KERNEL_0         (KERNEL_0),
+        .KERNEL_1         (KERNEL_1),
+        .DILATION_0       (DILATION_0),
+        .DILATION_1       (DILATION_1),
+        .PADDING_0        (PADDING_0),
+        .PADDING_1        (PADDING_1),
+        .STRIDE_0         (STRIDE_0),
+        .STRIDE_1         (STRIDE_1)
+    ) u_control (
+        .fifo_rd_en       (fifo_rd_en),
+        .o_valid          (o_valid),
+        .is_padding       (is_padding),
+        .out_blank        (out_blank),
+        .shift            (shift),
+        .fifo_almost_full (fifo_almost_full),
+        .i_valid          (i_valid),
+        .pe_ready         (pe_ready),
+        .pe_ack           (pe_ack),
+        .clk              (clk),
+        .rst_n            (rst_n)
+    );
+
+    line_buffer_datapath #(
+        .DATA_WIDTH (DATA_WIDTH),
+        .IN_CHANNEL (IN_CHANNEL),
+        .IN_WIDTH   (IN_WIDTH),
+        .KERNEL_0   (KERNEL_0),
+        .KERNEL_1   (KERNEL_1),
+        .DILATION_0 (DILATION_0),
+        .DILATION_1 (DILATION_1),
+        .PADDING_0  (PADDING_0),
+        .PADDING_1  (PADDING_1)
+    ) u_datapath (
+        .o_data     (o_data),
+        .i_data     (i_data),
+        .is_padding (is_padding),
+        .out_blank  (out_blank),
+        .shift      (shift),
+        .clk        (clk),
+        .rst_n      (rst_n)
+    );
+
+    //////////////////////////////////////////////////////////////////////////////
+
+    function integer num_blank_pts;
+        input integer dummy;
+        begin
+            if (WINDOW_0 <= PADDING_0) begin
+                num_blank_pts = KERNEL_PTS;
+            end
+            else begin
+                // Top points
+                if (PADDING_0 == 0) begin
+                    num_blank_pts = 0;
+                end
+                else begin
+                    num_blank_pts = KERNEL_1 * ((PADDING_0 - 1) / DILATION_0 + 1);
+                end
+
+                // Side points
+                if (PADDING_1 > 0 && PADDING_0 % DILATION_0 == 0) begin
+                    if (WINDOW_1 <= PADDING_1) begin
+                        num_blank_pts = num_blank_pts + KERNEL_1;
+                    end
+                    else begin
+                        num_blank_pts = num_blank_pts + (PADDING_1 - 1) / DILATION_1 + 1;
+                    end
                 end
             end
-        end else begin
-            case (state)
-                IDLE: begin
-                    if (~fifo_empty) begin
-                        state <= LOAD;
-                        fifo_read_en <= 1;
-                    end
-                end
-                
-                LOAD: begin
-                    if (~fifo_empty) begin
-                        // Đặt fifo_read_en trước, đọc dữ liệu ở chu kỳ sau
-                        fifo_read_en <= 1;
-
-                        // Chỉ ghi vào buffer khi fifo_read_en đã là 1
-                        if (fifo_read_en) begin
-                            buffer_r[PADDING + row_cnt][PADDING + col_cnt] <= data_r;
-                            buffer_g[PADDING + row_cnt][PADDING + col_cnt] <= data_g;
-                            buffer_b[PADDING + row_cnt][PADDING + col_cnt] <= data_b;
-                            
-                            // Cập nhật con trỏ chỉ khi đã đọc dữ liệu
-                            if (col_cnt == IMG_WIDTH - 1) begin
-                                col_cnt <= 0;
-                                if (row_cnt == IMG_HEIGHT - 1) begin
-                                    row_cnt <= 0;
-                                    loading_done <= 1;
-                                    fifo_read_en <= 0;
-                                    state <= PROCESS;
-                                end else begin
-                                    row_cnt <= row_cnt + 1;
-                                end
-                            end else begin
-                                col_cnt <= col_cnt + 1;
-                            end
-                        end
-                    end else begin
-                        fifo_read_en <= 0;
-                    end
-                end
-                
-                PROCESS: begin
-                    if (window_ready) begin
-                        // Tạo cửa sổ trượt từ buffer
-                        window_valid <= 1;
-                        
-                        // Đóng gói dữ liệu cửa sổ
-                        for (k = 0; k < CHANNELS; k = k + 1) begin
-                            for (m = 0; m < KERNEL_SIZE; m = m + 1) begin
-                                for (n = 0; n < KERNEL_SIZE; n = n + 1) begin
-                                    if (k == 0) begin
-                                        window_data[(k*KERNEL_SIZE*KERNEL_SIZE + m*KERNEL_SIZE + n)*DATA_WIDTH +: DATA_WIDTH] 
-                                            <= buffer_r[window_row + m][window_col + n];
-                                    end else if (k == 1) begin
-                                        window_data[(k*KERNEL_SIZE*KERNEL_SIZE + m*KERNEL_SIZE + n)*DATA_WIDTH +: DATA_WIDTH] 
-                                            <= buffer_g[window_row + m][window_col + n];
-                                    end else begin
-                                        window_data[(k*KERNEL_SIZE*KERNEL_SIZE + m*KERNEL_SIZE + n)*DATA_WIDTH +: DATA_WIDTH] 
-                                            <= buffer_b[window_row + m][window_col + n];
-                                    end
-                                end
-                            end
-                        end
-                        
-                        // Kiểm tra cửa sổ cuối cùng
-                        if ((window_row == IMG_HEIGHT + 2*PADDING - KERNEL_SIZE) && 
-                            (window_col == IMG_WIDTH + 2*PADDING - KERNEL_SIZE)) begin
-                            // Đánh dấu đã xử lý cửa sổ cuối cùng
-                            processed_last_window <= 1;
-                        end
-                        else begin
-                            // Di chuyển cửa sổ tiếp theo
-                            if (window_col == IMG_WIDTH + 2*PADDING - KERNEL_SIZE) begin
-                                window_col <= 0;
-                                window_row <= window_row + 1;
-                            end else begin
-                                window_col <= window_col + 1;
-                            end
-                        end
-                    end else begin
-                        window_valid <= 0;
-                    end
-                    
-                    // Kiểm tra nếu đã xử lý xong cửa sổ cuối
-                    if (processed_last_window && window_valid) begin
-                        window_valid <= 0;
-                        processed_last_window <= 0;
-                        window_row <= 0;
-                        window_col <= 0;
-                        state <= DONE;
-                    end
-                end
-                
-                DONE: begin
-                    // Chờ tín hiệu reset hoặc lệnh mới
-                    state <= IDLE;
-                end
-            endcase
         end
-    end
+    endfunction
+
 endmodule

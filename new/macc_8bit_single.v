@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module macc #(
+module macc_8bit_single #(
     parameter NUM_INPUTS = 20
 )(
     o_data,
@@ -48,7 +48,7 @@ module macc #(
                 end
             end
 
-            mult u_mult (
+            mult_8bit_single u_mult (
                 .y (mult),
                 .a (i_data_a[(i+1)*8-1:i*8]),
                 .b (i_data_b[(i+1)*8-1:i*8])
@@ -71,7 +71,7 @@ module macc #(
 
 endmodule
 
-(* use_dsp = "yes" *) module mult (
+(* use_dsp = "yes" *) module mult_8bit_single (
     output signed [15:0] y,
     input  signed [7:0] a, b
 );

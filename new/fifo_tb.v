@@ -1,177 +1,132 @@
-`timescale 1ns/1ps
+`timescale 1ns / 1ps
 
-module fifo_tb();
-    // Các tham số cho testbench
+module fifo_single_read_tb();
+
+    // Tham số
     parameter DATA_WIDTH = 8;
-    parameter FIFO_DEPTH = 16;  // Dùng độ sâu nhỏ hơn để dễ kiểm tra
-    parameter CLK_PERIOD = 10;  // 10ns = 100MHz
-    
-    // Các tín hiệu để kết nối với module FIFO
-    reg clk;
+    parameter DEPTH = 8;
+    parameter CLK_PERIOD = 10; // 10ns
+
+    // Tín hiệu
+    reg [DATA_WIDTH-1:0] wr_data;
+    reg wr_en;
+    reg rd_en;
     reg rst_n;
-    reg write_en;
-    reg read_en;
-    reg [DATA_WIDTH-1:0] data_in;
-    wire [DATA_WIDTH-1:0] data_out;
+    reg clk;
+    
+    wire [DATA_WIDTH-1:0] rd_data;
     wire empty;
     wire full;
+    wire almost_full;
     
-    // Biến đếm và kiểm tra
-    integer i;
-    integer error_count = 0;
-    reg [DATA_WIDTH-1:0] expected_data;
-    
-    // Khởi tạo đối tượng FIFO
-    fifo #(
+    // Khởi tạo DUT (Device Under Test)
+    fifo_single_read #(
         .DATA_WIDTH(DATA_WIDTH),
-        .FIFO_DEPTH(FIFO_DEPTH)
-    ) fifo_inst (
-        .clk(clk),
-        .rst_n(rst_n),
-        .write_en(write_en),
-        .read_en(read_en),
-        .data_in(data_in),
-        .data_out(data_out),
+        .DEPTH(DEPTH),
+        .ALMOST_FULL_THRES(2)  // Báo gần đầy khi còn 2 vị trí trống
+    ) dut (
+        .rd_data(rd_data),
         .empty(empty),
-        .full(full)
+        .full(full),
+        .almost_full(almost_full),
+        .wr_data(wr_data),
+        .wr_en(wr_en),
+        .rd_en(rd_en),
+        .rst_n(rst_n),
+        .clk(clk)
     );
     
-    // Tạo xung clock
+    // Tạo xung nhịp đồng hồ
     always begin
         #(CLK_PERIOD/2) clk = ~clk;
     end
     
-    // Kiểm tra các chức năng của FIFO
+    // Hiển thị thông tin trong quá trình mô phỏng
     initial begin
-        // Khởi tạo
+        $monitor("Time=%0t, wr_en=%b, rd_en=%b, wr_data=%h, rd_data=%h, empty=%b, full=%b, almost_full=%b", 
+                $time, wr_en, rd_en, wr_data, rd_data, empty, full, almost_full);
+    end
+    
+    // Kịch bản kiểm tra
+    initial begin
+        // Khởi tạo các tín hiệu
         clk = 0;
         rst_n = 0;
-        write_en = 0;
-        read_en = 0;
-        data_in = 0;
-        
-        // Hiển thị thông tin bắt đầu
-        $display("=== BẮT ĐẦU KIỂM TRA FIFO ===");
-        $display("Thời gian: %0t ns", $time);
-        $display("Độ rộng dữ liệu: %0d bits", DATA_WIDTH);
-        $display("Độ sâu FIFO: %0d phần tử", FIFO_DEPTH);
+        wr_en = 0;
+        rd_en = 0;
+        wr_data = 8'h00;
         
         // Reset hệ thống
-        #(CLK_PERIOD*2);
-        rst_n = 1;
-        #(CLK_PERIOD);
+        #20 rst_n = 1;
+        #10;
         
-        // Kiểm tra cờ empty sau khi reset
-        if (!empty) begin
-            $display("LỖI: FIFO không rỗng sau khi reset");
-            error_count = error_count + 1;
-        end else begin
-            $display("OK: FIFO rỗng sau khi reset");
+        // Kiểm tra 1: Trạng thái ban đầu
+        $display("1. Kiểm tra trạng thái sau reset");
+        if (empty) $display("PASS: FIFO rỗng sau reset");
+        else $display("FAIL: FIFO không rỗng sau reset");
+        
+        // Kiểm tra 2: Ghi dữ liệu vào FIFO đến khi đầy
+        $display("2. Ghi dữ liệu vào FIFO đến khi đầy");
+        wr_en = 1;
+        for (integer i = 1; i <= DEPTH; i = i + 1) begin
+            wr_data = i;
+            #CLK_PERIOD;
         end
+        wr_en = 0;
         
-        // Kiểm tra cờ full sau khi reset
-        if (full) begin
-            $display("LỖI: FIFO đầy sau khi reset");
-            error_count = error_count + 1;
-        end else begin
-            $display("OK: FIFO không đầy sau khi reset");
+        if (full) $display("PASS: FIFO đầy sau khi ghi %0d phần tử", DEPTH);
+        else $display("FAIL: FIFO không đầy sau khi ghi %0d phần tử", DEPTH);
+        
+        // Kiểm tra 3: Đọc dữ liệu từ FIFO
+        $display("3. Đọc dữ liệu từ FIFO");
+        rd_en = 1;
+        for (integer i = 1; i <= DEPTH; i = i + 1) begin
+            #CLK_PERIOD;
+            $display("Đọc dữ liệu thứ %0d: %h", i, rd_data);
         end
+        rd_en = 0;
         
-        // Kiểm tra ghi dữ liệu vào FIFO
-        $display("\n--- KIỂM TRA GHI DỮ LIỆU ---");
-        for (i = 0; i < FIFO_DEPTH; i = i + 1) begin
-            data_in = i + 10;  // Giá trị bắt đầu từ 10
-            write_en = 1;
-            @(posedge clk);
-            #1; // Đợi một chút để tín hiệu cập nhật
+        if (empty) $display("PASS: FIFO rỗng sau khi đọc hết");
+        else $display("FAIL: FIFO không rỗng sau khi đọc hết");
+        
+        // Kiểm tra 4: Ghi và đọc đan xen
+        $display("4. Ghi và đọc đan xen");
+        for (integer i = 1; i <= 4; i = i + 1) begin
+            // Ghi
+            wr_en = 1;
+            wr_data = 8'hA0 + i;
+            #CLK_PERIOD;
+            wr_en = 0;
             
-            $display("Ghi dữ liệu: %0d, Full: %0b, Empty: %0b", data_in, full, empty);
-            
-            if (i == FIFO_DEPTH-1 && !full) begin
-                $display("LỖI: FIFO phải đầy sau khi ghi %0d phần tử", FIFO_DEPTH);
-                error_count = error_count + 1;
-            end
+            // Đọc sau khi ghi
+            rd_en = 1;
+            #CLK_PERIOD;
+            rd_en = 0;
+            $display("Đọc dữ liệu: %h", rd_data);
         end
         
-        write_en = 0;
-        #(CLK_PERIOD);
-        
-        // Kiểm tra đọc dữ liệu từ FIFO
-        $display("\n--- KIỂM TRA ĐỌC DỮ LIỆU ---");
-        for (i = 0; i < FIFO_DEPTH; i = i + 1) begin
-            expected_data = i + 10;  // Giá trị bắt đầu từ 10
-            read_en = 1;
-            @(posedge clk);
-            #1; // Đợi một chút để tín hiệu cập nhật
-            
-            $display("Đọc dữ liệu: %0d, Kỳ vọng: %0d, Full: %0b, Empty: %0b", 
-                      data_out, expected_data, full, empty);
-                      
-            if (data_out !== expected_data) begin
-                $display("LỖI: Dữ liệu đọc ra không khớp với kỳ vọng");
-                error_count = error_count + 1;
-            end
-            
-            if (i == FIFO_DEPTH-1 && !empty) begin
-                $display("LỖI: FIFO phải rỗng sau khi đọc %0d phần tử", FIFO_DEPTH);
-                error_count = error_count + 1;
-            end
+        // Kiểm tra 5: Kiểm tra almost_full
+        $display("5. Kiểm tra tín hiệu almost_full");
+        wr_en = 1;
+        for (integer i = 1; i <= DEPTH-2; i = i + 1) begin
+            wr_data = 8'hB0 + i;
+            #CLK_PERIOD;
         end
         
-        read_en = 0;
-        #(CLK_PERIOD);
+        if (almost_full) $display("PASS: FIFO báo almost_full khi còn 2 vị trí trống");
+        else $display("FAIL: FIFO không báo almost_full khi còn 2 vị trí trống");
         
-        // Kiểm tra trường hợp đặc biệt: Đọc khi FIFO rỗng
-        $display("\n--- KIỂM TRA ĐỌC KHI FIFO RỖNG ---");
-        read_en = 1;
-        @(posedge clk);
-        #1;
-        $display("Đọc khi FIFO rỗng: data_out = %0d", data_out);
-        read_en = 0;
-        #(CLK_PERIOD);
-        
-        // Kiểm tra trường hợp đặc biệt: Ghi và đọc đồng thời
-        $display("\n--- KIỂM TRA GHI VÀ ĐỌC ĐỒNG THỜI ---");
-        for (i = 0; i < 5; i = i + 1) begin
-            data_in = 100 + i;
-            write_en = 1;
-            read_en = 1;
-            @(posedge clk);
-            #1;
-            $display("Ghi: %0d, Đọc: %0d, Full: %0b, Empty: %0b", 
-                      data_in, data_out, full, empty);
+        // Ghi thêm đến khi đầy
+        for (integer i = 1; i <= 2; i = i + 1) begin
+            wr_data = 8'hC0 + i;
+            #CLK_PERIOD;
         end
+        wr_en = 0;
         
-        write_en = 0;
-        read_en = 0;
-        #(CLK_PERIOD);
-        
-        // Hiển thị kết quả cuối cùng
-        $display("\n=== KẾT QUẢ KIỂM TRA ===");
-        if (error_count == 0) begin
-            $display("THÀNH CÔNG: Tất cả các kiểm tra đã vượt qua");
-        end else begin
-            $display("THẤT BẠI: Có %0d lỗi xảy ra trong quá trình kiểm tra", error_count);
-        end
-        
-        #(CLK_PERIOD*5);
+        // Kết thúc mô phỏng
+        $display("Kết thúc mô phỏng");
+        #100;
         $finish;
-    end
-    
-    // Hiển thị thông tin khi FIFO đầy
-    always @(posedge full) begin
-        $display("FIFO đã đầy tại thời điểm %0t ns", $time);
-    end
-    
-    // Hiển thị thông tin khi FIFO rỗng
-    always @(posedge empty) begin
-        $display("FIFO đã rỗng tại thời điểm %0t ns", $time);
-    end
-    
-    // Tạo file VCD để quan sát sóng
-    initial begin
-        $dumpfile("fifo_tb.vcd");
-        $dumpvars(0, fifo_tb);
     end
     
 endmodule

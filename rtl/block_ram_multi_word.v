@@ -18,11 +18,15 @@ module block_ram_multi_word #(
 
     (* ram_style = RAM_STYLE *) reg [DATA_WIDTH*NUM_WORDS-1:0] ram[0:DEPTH-1];
 
+    // Write port
     genvar i;
+
     generate
-        for (i = 0; i < DEPTH; i = i + 1) begin : gen0
-            always @(clk) begin
-                ram[i] <= {DATA_WIDTH*NUM_WORDS{1'b1}};
+        for (i = 0; i < NUM_WORDS; i = i + 1) begin : gen0
+            always @ (posedge clk) begin
+                if (wr_en[i]) begin
+                    ram[wr_addr][(i+1)*DATA_WIDTH-1:i*DATA_WIDTH] <= wr_data;
+                end
             end
         end
     endgenerate

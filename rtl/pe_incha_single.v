@@ -17,7 +17,27 @@ module pe_incha_single #(
     parameter PADDING_0  = 1,
     parameter PADDING_1  = 1,
     parameter STRIDE_0   = 1,
-    parameter STRIDE_1   = 1
+    parameter STRIDE_1   = 1,
+    
+    // Địa chỉ định dạng parameters
+    parameter ADDR_TYPE_WIDTH   = 8,
+    parameter ADDR_CHANNEL_WIDTH = 8,
+    parameter ADDR_POSITION_WIDTH = 8,
+    parameter ADDR_RESERVED_WIDTH = 8,
+    
+    // Địa chỉ Type IDs
+    parameter ADDR_TYPE_KERNEL = 8'h00,
+    parameter ADDR_TYPE_BIAS   = 8'h01,
+    
+    // Vị trí field trong địa chỉ
+    parameter ADDR_TYPE_MSB     = 31,
+    parameter ADDR_TYPE_LSB     = 24,
+    parameter ADDR_CHANNEL_MSB  = 23,
+    parameter ADDR_CHANNEL_LSB  = 16,
+    parameter ADDR_POSITION_MSB = 15,
+    parameter ADDR_POSITION_LSB = 8,
+    parameter ADDR_RESERVED_MSB = 7,
+    parameter ADDR_RESERVED_LSB = 0
 )(
     o_data,
     o_valid,
@@ -34,6 +54,8 @@ module pe_incha_single #(
 
     localparam KERNEL_PTS        = KERNEL_0 * KERNEL_1;
     localparam OUTPUT_DATA_WIDTH = OUTPUT_MODE == "relu" ? 8 : 16;
+    localparam OUT_CHANNEL_BITS  = $clog2(OUT_CHANNEL);
+    localparam MACC_OUTPUT_DATA_WIDTH = 16 + $clog2(KERNEL_PTS * IN_CHANNEL);
 
     output [OUTPUT_DATA_WIDTH*OUT_CHANNEL-1:0] o_data;
     output                                     o_valid;
@@ -47,6 +69,15 @@ module pe_incha_single #(
     input                                      clk;
     input                                      rst_n;
 
+    // Extract address fields
+    wire [ADDR_TYPE_WIDTH-1:0]     addr_type;
+    wire [ADDR_CHANNEL_WIDTH-1:0]  addr_channel;
+    wire [ADDR_POSITION_WIDTH-1:0] addr_position;
+    
+    assign addr_type     = weight_wr_addr[ADDR_TYPE_MSB:ADDR_TYPE_LSB];
+    assign addr_channel  = weight_wr_addr[ADDR_CHANNEL_MSB:ADDR_CHANNEL_LSB];
+    assign addr_position = weight_wr_addr[ADDR_POSITION_MSB:ADDR_POSITION_LSB];
+    
     // Controller
     wire cnt_en;
     wire cnt_limit;
@@ -72,8 +103,10 @@ module pe_incha_single #(
 
     // Kernel ram
     wire [8*IN_CHANNEL*KERNEL_PTS-1:0] kernel;
-    reg  [$clog2(OUT_CHANNEL)-1:0]     kernel_cnt;
-
+    reg  [OUT_CHANNEL_BITS-1:0]        kernel_cnt;
+    wire                               is_kernel_write;
+    
+    assign is_kernel_write = weight_wr_en & (addr_type == ADDR_TYPE_KERNEL);
     assign cnt_limit = kernel_cnt == OUT_CHANNEL - 1;
 
     always @ (posedge clk or negedge rst_n) begin
@@ -85,6 +118,22 @@ module pe_incha_single #(
         end
     end
 
+    reg [KERNEL_PTS*IN_CHANNEL-1:0] kernel_wr_en;
+    integer j;
+
+    // Tạo one-hot encoding cho kernel_wr_en - bật đúng bit tương ứng với addr_position
+    always @(*) begin
+        // Khởi tạo tất cả bit bằng 0
+        for (j = 0; j < KERNEL_PTS*IN_CHANNEL; j = j + 1) begin
+            kernel_wr_en[j] = 1'b0;
+        end
+        
+        // Nếu là ghi kernel và addr_position hợp lệ, bật bit tương ứng
+        if (is_kernel_write && addr_position < KERNEL_PTS*IN_CHANNEL) begin
+            kernel_wr_en[addr_position] = 1'b1;
+        end
+    end
+
     block_ram_multi_word #(
         .DATA_WIDTH      (8),
         .DEPTH           (OUT_CHANNEL),
@@ -93,20 +142,23 @@ module pe_incha_single #(
         .OUTPUT_REGISTER ("true")
     ) u_kernel (
         .rd_data         (kernel),
-        .wr_data         (1'b1),
+        .wr_data         (weight_wr_data[7:0]),
         .rd_addr         (kernel_cnt),
-        .wr_addr         (1'b1),
-        .wr_en           (kernel_ram_wr_en),
+        .wr_addr         (addr_channel[OUT_CHANNEL_BITS-1:0]),
+        .wr_en           (kernel_wr_en),  // Sử dụng tín hiệu one-hot được tạo
         .rd_en           (1'b1),
         .clk             (clk)
     );
 
     // Bias ram
-    wire signed [15:0] bias;
-
-    reg  [$clog2(OUT_CHANNEL)-1:0] bias_cnt;
-    wire                           bias_cnt_en;
-    wire                           bias_cnt_limit = bias_cnt == OUT_CHANNEL - 1;
+    wire signed [15:0]           bias;
+    reg  [OUT_CHANNEL_BITS-1:0]  bias_cnt;
+    wire                         bias_cnt_en;
+    wire                         bias_cnt_limit;
+    wire                         is_bias_write;
+    
+    assign bias_cnt_limit = bias_cnt == OUT_CHANNEL - 1;
+    assign is_bias_write = weight_wr_en & (addr_type == ADDR_TYPE_BIAS);
 
     always @ (posedge clk or negedge rst_n) begin
         if (~rst_n) begin
@@ -125,19 +177,17 @@ module pe_incha_single #(
     ) u_bias (
         .rd_data         (bias),
         .wr_data         (weight_wr_data),
-        .wr_addr         (bias_wr_addr),
+        .wr_addr         (addr_channel[OUT_CHANNEL_BITS-1:0]),
         .rd_addr         (bias_cnt),
-        .wr_en           (bias_wr_en),
+        .wr_en           (is_bias_write),
         .rd_en           (1'b1),
         .clk             (clk)
     );
 
     // MACC co-efficient reg
-    reg signed [15:0] macc_coeff = 16'h0080;
+    reg signed [15:0] macc_coeff = 1;
 
     // MACC
-    localparam MACC_OUTPUT_DATA_WIDTH = 16 + $clog2(KERNEL_PTS * IN_CHANNEL);
-
     wire [MACC_OUTPUT_DATA_WIDTH-1:0] macc_data_out;
     wire                              macc_valid_o;
     reg                               macc_valid_i;
@@ -151,9 +201,7 @@ module pe_incha_single #(
         end
     end
 
-    ////////////////////////////////////////////////////////////////////////////////////////////////
-
-    // BRAM output pipeline register because Vivado won't stop screaming about it
+    // BRAM output pipeline register
     reg [8*IN_CHANNEL*KERNEL_PTS-1:0] i_data_reg_pipeline;
     reg                               macc_valid_i_pipeline;
 
@@ -170,8 +218,7 @@ module pe_incha_single #(
         end
     end
 
-    ////////////////////////////////////////////////////////////////////////////////////////////////
-
+    // MACC module
     macc_8bit_single #(
         .NUM_INPUTS (KERNEL_PTS * IN_CHANNEL)
     ) u_macc_single (
@@ -204,8 +251,10 @@ module pe_incha_single #(
     end
 
     // MACC co-efficient
-    reg signed [MACC_OUTPUT_DATA_WIDTH+16-1:0] coeff_prod;
-    reg                                        coeff_valid;
+    localparam COEFF_RESULT_WIDTH = MACC_OUTPUT_DATA_WIDTH + 16;
+    
+    reg signed [COEFF_RESULT_WIDTH-1:0] coeff_prod;
+    reg                                 coeff_valid;
 
     always @ (posedge clk) begin
         if (macc_valid_o_reg) begin
@@ -223,10 +272,13 @@ module pe_incha_single #(
     end
 
     // Bias
-    wire signed [23:0]                          bias_adjusted = {bias, {8{1'b0}}};
-    reg  signed [MACC_OUTPUT_DATA_WIDTH+16-1:0] bias_sum;
-    reg                                         bias_valid;
-
+    localparam BIAS_ADJUSTED_WIDTH = 24;
+    
+    wire signed [BIAS_ADJUSTED_WIDTH-1:0]  bias_adjusted;
+    reg  signed [COEFF_RESULT_WIDTH-1:0]   bias_sum;
+    reg                                    bias_valid;
+    
+    assign bias_adjusted = {bias, {8{1'b0}}};
     assign bias_cnt_en = macc_valid_o;
 
     always @ (posedge clk) begin
@@ -249,9 +301,21 @@ module pe_incha_single #(
     wire                                obuffer_valid;
 
     generate
-        if (OUTPUT_MODE == "relu") begin : gen0
-            assign obuffer_data = bias_sum < 0 ? 0 : ((bias_sum[23] || bias_sum[22:16] == {7{1'b1}}) ? 127 : (bias_sum[23:16] + (bias_sum[15] & |bias_sum[14:12])));
-            assign obuffer_valid  = bias_valid;
+        if (OUTPUT_MODE == "relu") begin : gen_relu
+            // Constants for ReLU activation
+            localparam RELU_MAX_VALUE = 127;
+            localparam RELU_MIN_VALUE = 0;
+            
+            // Các bit cần kiểm tra cho overflow
+            wire overflow_positive = bias_sum[23] || bias_sum[22:16] == {7{1'b1}};
+            // Bit làm tròn
+            wire rounding_bit = bias_sum[15] & |bias_sum[14:12];
+            
+            // ReLU với saturation và rounding
+            assign obuffer_data = bias_sum < 0 ? RELU_MIN_VALUE : 
+                                 (overflow_positive ? RELU_MAX_VALUE : 
+                                 (bias_sum[23:16] + rounding_bit));
+            assign obuffer_valid = bias_valid;
         end
     endgenerate
 

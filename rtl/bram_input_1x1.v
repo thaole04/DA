@@ -10,10 +10,10 @@ module bram_input_1x1 #(
     parameter OUTPUT_REGISTER = "false"
 )(
     output [DATA_WIDTH*IN_CHANNELS-1:0]          rd_data,
-    input  [$clog2(IN_WIDTH*IN_HEIGHT)-1:0]      rd_addr, // Position in feature map (x,y coordinate flattened)
+    input  [$clog2(IN_WIDTH*IN_HEIGHT)-1:0]      rd_addr,
     input                                        rd_en,
-    input  [DATA_WIDTH-1:0]                      wr_data,
-    input  [$clog2(DEPTH)-1:0]                   wr_addr,
+    input  [DATA_WIDTH*IN_CHANNELS-1:0]          wr_data,
+    input  [$clog2(IN_WIDTH*IN_HEIGHT)-1:0]      wr_addr,
     input                                        wr_en,
     input                                        clk
 );
@@ -22,10 +22,12 @@ module bram_input_1x1 #(
     
     integer i;
 
-    // Write port, write data to the RAM for the specified address
+    // Write port
     always @ (posedge clk) begin
         if (wr_en) begin
-            ram[wr_addr] <= wr_data;
+            for (i = 0; i < IN_CHANNELS; i = i + 1) begin
+                ram[wr_addr*IN_CHANNELS + i] <= wr_data[(i+1)*DATA_WIDTH-1 -: DATA_WIDTH];
+            end
         end
     end
 

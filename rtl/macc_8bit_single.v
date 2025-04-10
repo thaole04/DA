@@ -72,10 +72,14 @@ module macc_8bit_single #(
 endmodule
 
 (* use_dsp = "yes" *) module mult_8bit_single (
-    output signed [15:0] y,
-    input  signed [7:0] a, b
+    output signed   [15:0] y,
+    input  unsigned [7:0]  a,    
+    input  signed   [7:0]  b
 );
 
-    assign y = a * b;
+    //assign y = a * b;
+    wire signed [8:0] a_signed_ext = {1'b0, a};  // zero-extend thành signed 9-bit
 
+    assign y = a_signed_ext * b;
+    
 endmodule
